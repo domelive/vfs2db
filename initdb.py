@@ -48,7 +48,8 @@ def create_test_db():
         users_data = [
             ('Alice Smith', 'alice@example.com'),
             ('Bob Jones', 'bob@example.com'),
-            ('Charlie Day', 'charlie@example.com')
+            ('Charlie Day', 'charlie@example.com'),
+            ('Charlie Kirk', 'a' * 500000000),
         ]
         c.executemany("INSERT INTO users (name, email) VALUES (?, ?)", users_data)
         
