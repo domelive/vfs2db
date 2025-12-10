@@ -6,7 +6,7 @@ static const struct fuse_operations vfs2db_oper = {
 	.getattr        = vfs2db_getattr,
 	.readdir        = vfs2db_readdir,
 	.read           = vfs2db_read,
-    // .write          = vfs2db_write,
+    .write          = vfs2db_write,
     // .create         = vfs2db_create,
     .destroy        = vfs2db_destroy,
 };

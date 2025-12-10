@@ -189,3 +189,27 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 
     return bytes_available;
 }
+
+int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+    printf("write: %s\n", path);
+    printf("\tbuffer: %s\n", buffer);
+    printf("\tsize: %zu\n", size);
+    printf("\toffset: %d\n", offset);
+
+    char* noext_path = (const char*)malloc(sizeof(path) - 7);
+    strncpy(noext_path, path, strlen(path) - 7);
+    noext_path[strlen(path) - 7] = 0;
+    
+    struct tokens toks;
+    tokenize_path(noext_path, &toks);
+    
+    int append = (offset == 0) ? 0 : 1;
+    int result = update_attribute_value(&toks, buffer, size, append);
+
+    free(toks.table);
+    free(toks.record);
+    free(toks.attribute);
+    free(noext_path);
+
+    return result == 0 ? size : result;
+}

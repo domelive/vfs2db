@@ -21,7 +21,7 @@ def create_test_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 email TEXT UNIQUE
-            )
+            ) STRICT
         ''')
         print("Table 'users' created.")
 
@@ -36,7 +36,7 @@ def create_test_db():
                 price REAL,
                 user_id INTEGER,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-            )
+            ) STRICT
         ''')
         print("Table 'orders' created (with Foreign Key).")
 
