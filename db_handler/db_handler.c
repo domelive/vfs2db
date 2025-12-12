@@ -9,7 +9,7 @@ int get_attribute_size(struct tokens* toks) {
     printf("\t\ttable: %s\n", toks->table);
     printf("\t\trecord: %s\n", toks->record);
 
-    char *query_fmt = "SELECT \"%s\" FROM \"%s\" WHERE rowid = ?";
+    char *query_fmt = "SELECT %s FROM %s WHERE rowid = ?";
     char query_str[1024];
     snprintf(query_str, sizeof(query_str), query_fmt, toks->attribute, toks->table);
     printf("\tquery: %s\n", query_str);
@@ -19,11 +19,9 @@ int get_attribute_size(struct tokens* toks) {
           -1, &pstmt, NULL);
 
     if (rc != SQLITE_OK) return -1;
-
     rc = sqlite3_bind_text(pstmt, 1, toks->record, -1, SQLITE_TRANSIENT);
     
     if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
-
     rc = sqlite3_step(pstmt);
 
     // If there's no record matching the query (should not be possible)
@@ -47,7 +45,7 @@ int get_attribute_value(struct tokens* toks, char **bytes, size_t *size) {
 
     sqlite3_stmt *pstmt;
 
-    char *query_fmt = "SELECT \"%s\" FROM \"%s\" WHERE rowid = ?";
+    char *query_fmt = "SELECT %s FROM %s WHERE rowid = ?";
     char query_str[1024];
     snprintf(query_str, sizeof(query_str), query_fmt, toks->attribute, toks->table);
     printf("\tquery: %s\n", query_str);
@@ -72,13 +70,42 @@ int get_attribute_value(struct tokens* toks, char **bytes, size_t *size) {
     return 0;
 }
 
+int get_attribute_type(struct tokens *toks) {
+    printf("get_attribute_type\n");
+
+    sqlite3_stmt *pstmt;
+
+    char *query_fmt = "SELECT %s FROM %s WHERE rowid = ?";
+    char query_str[1024];
+    snprintf(query_str, sizeof(query_str), query_fmt, toks->attribute, toks->table);
+    printf("\tquery: %s\n", query_str);
+    
+    int rc = sqlite3_prepare_v2(db, query_str, -1, &pstmt, NULL);
+    if (rc != SQLITE_OK) return -1;
+
+    rc = sqlite3_bind_text(pstmt, 1, toks->record, -1, SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
+
+    rc = sqlite3_step(pstmt);
+    if (rc != SQLITE_ROW) {
+        printf("\tNo record matching query\n");
+        sqlite3_finalize(pstmt);
+        return -1;
+    }
+
+    int type = sqlite3_column_type(pstmt, 0);
+    
+    sqlite3_finalize(pstmt);
+    return type;
+}
+
 int update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
     printf("update_attribute_value\n");
     sqlite3_stmt *pstmt;
 
     const char* query = (append == 0) 
-        ? "UPDATE \"%s\" SET \"%s\" = ? WHERE rowid = ?"
-        : "UPDATE \"%s\" SET \"%s\" = \"%s\" || ? WHERE rowid = ?"; 
+        ? "UPDATE %s SET %s = ? WHERE rowid = ?"
+        : "UPDATE %s SET %s = \"%s\" || ? WHERE rowid = ?"; 
     
     char query_str[1024];
     snprintf(query_str, sizeof(query_str), query, toks->table, toks->attribute, toks->attribute);
@@ -108,7 +135,7 @@ void make_root_select(sqlite3_stmt **pstmt) {
 }
 
 void make_table_select(sqlite3_stmt **pstmt, const char *table) {
-    char *query_fmt = "SELECT rowid from \"%s\"";
+    char *query_fmt = "SELECT rowid from %s";
     char query_str[1024];
     snprintf(query_str, sizeof(query_str), query_fmt, table);
     int rc = sqlite3_prepare_v2(db,
@@ -123,4 +150,16 @@ void make_record_select(sqlite3_stmt **pstmt, const char *table) {
     int rc = sqlite3_prepare_v2(db,
           (const char*)query_str,
           -1, pstmt, NULL);
+}
+
+void get_table_fks(sqlite3_stmt **pstmt, const char *table) {
+    printf("get_table_fks\n");
+
+    char* query_fmt = "SELECT * FROM pragma_foreign_key_list('%s')";
+    char query_str[1024];
+    snprintf(query_str, sizeof(query_str), query_fmt, table);
+    
+    printf("\tquery: %s\n", query_str);
+
+    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, pstmt, NULL);
 }

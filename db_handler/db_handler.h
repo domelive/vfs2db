@@ -20,9 +20,11 @@ extern sqlite3 *db;
 
 int  get_attribute_size(struct tokens* toks);
 int  get_attribute_value(struct tokens* toks, char **bytes, size_t *size);
+int  get_attribute_type(struct tokens *toks);
 int  update_attribute_value(struct tokens* toks, const char *buffer, size_t size, int append);
 void make_root_select(sqlite3_stmt **pstmt);
 void make_table_select(sqlite3_stmt **pstmt, const char *table);
 void make_record_select(sqlite3_stmt **pstmt, const char *table);
+void get_table_fks(sqlite3_stmt **pstmt, const char *table);
 
 #endif // DB_HANDLER_H

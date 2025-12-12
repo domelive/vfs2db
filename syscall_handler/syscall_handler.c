@@ -2,13 +2,15 @@
 
 extern sqlite3 *db;
 
-static inline void tokenize_path(const char* path, struct tokens* toks) {
+static inline struct tokens* tokenize_path(const char* path) {
     // path := /table/record/attribute
     // path := table/record/attribute
-    if (!path || !toks) return;
+    if (!path) return NULL;
+
+    struct tokens *toks = malloc(sizeof(struct tokens));
 
     char* path_copy = strdup(path); 
-    if (!path_copy) return;
+    if (!path_copy) return NULL;
 
     char *cursor = path_copy;
     if (cursor[0] == '/') cursor++;
@@ -21,6 +23,36 @@ static inline void tokenize_path(const char* path, struct tokens* toks) {
     toks->attribute = t ? strdup(t) : NULL;
 
     free(path_copy);
+
+    return toks;
+}
+
+static inline char *remove_extension(const char *path) {
+    int noext_path_length = strlen(path) - 7;
+    if (noext_path_length <= 0) return NULL;
+
+    char *noext_path = malloc(noext_path_length + 1);
+    strncpy(noext_path, path, noext_path_length);
+    noext_path[noext_path_length] = 0;
+
+    return noext_path;
+}
+
+static inline int check_symlink(struct tokens* toks) {
+    printf("check_symlink\n");
+    sqlite3_stmt *pstmt;
+    get_table_fks(&pstmt, toks->table);
+
+    int rc;
+    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
+        const char *attr_name = (const char*)sqlite3_column_text(pstmt, 3);
+        printf("\tfk: %s\n", attr_name);
+        if (strncmp(attr_name, toks->attribute, strlen(toks->attribute)) == 0) {
+            printf("\tfk found: %s\n", toks->attribute);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void vfs2db_destroy(void *private_data) {
@@ -50,39 +82,77 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         st->st_atime = st->st_mtime = time(NULL);
     } else {
         printf("\tFile\n");
-        st->st_mode = S_IFREG | 0644;
-        st->st_uid = getuid();
-        st->st_gid = getgid();
-        st->st_atime = st->st_mtime = time(NULL);
-        st->st_nlink = 1;
 
-        // Get rid of the extension .vfs2db
-        char* noext_path = (const char*)malloc(sizeof(path) - 7);
-        strncpy(noext_path, path, strlen(path) - 7);
-        noext_path[strlen(path) - 7] = 0;
-        printf("\tNo extension path: %s\n", noext_path);
+        char *noext_path = remove_extension(path);
+        if (!noext_path) return -ENOMEM;
+        struct tokens *toks = tokenize_path(noext_path);
 
-        struct tokens toks;
-        tokenize_path(noext_path, &toks);
-        printf("\t\tTable: %s\n", toks.table);
-        printf("\t\tRecord: %s\n", toks.record);
-        printf("\t\tAttribute: %s\n", toks.attribute);
+        // We need to check if it is a symlink
+        int is_symlink = check_symlink(toks);
+        if (is_symlink) {
+            st->st_mode = S_IFLNK | 0644;
+            st->st_nlink = 1;
+            st->st_uid = getuid();
+            st->st_gid = getgid();
+            st->st_atime = st->st_mtime = time(NULL);
+        } else {
+            st->st_mode = S_IFREG | 0644;
+            st->st_nlink = 1;
+            st->st_uid = getuid();
+            st->st_gid = getgid();
+            st->st_atime = st->st_mtime = time(NULL);
+        }
 
-        size_t att_size = get_attribute_size(&toks);
+        size_t att_size = get_attribute_size(toks);
         if (att_size < 0) return -1;
 
         st->st_size = att_size;
 
-        free(toks.table);
-        free(toks.record);
-        free(toks.attribute);
+        free(toks->table);
+        free(toks->record);
+        free(toks->attribute);
+        free(toks);
         free(noext_path);
 
         printf("\tcontent size: %d\n", att_size);
     }
 
     return 0;
-} 
+}
+
+int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size) {
+    if (strcmp(name, "user.type") != 0) return -ENODATA;
+
+    char *noext_path = remove_extension(path);
+    if (!noext_path) return -ENOMEM;
+    
+    struct tokens *toks = tokenize_path(noext_path);
+
+    const char* t_str;
+    switch (get_attribute_type(toks)) {
+        case SQLITE_TEXT:    t_str = "TEXT"; break;
+        case SQLITE_INTEGER: t_str = "INTEGER"; break;
+        case SQLITE_FLOAT:   t_str = "FLOAT"; break;
+        case SQLITE_BLOB:    t_str = "BLOB"; break;
+        case SQLITE_NULL:    t_str = "NULL"; break;
+        default:             t_str = "UNDEFINED"; break;
+    }
+
+    printf("type: %s\n", t_str);
+
+    // 3. Return size or copy data
+    if (size == 0) return strlen(t_str);
+    if (size < strlen(t_str)) return -ERANGE;
+    
+    strcpy(value, t_str);
+
+    free(toks->table);
+    free(toks->record);
+    free(toks->attribute);
+    free(toks);
+
+    return strlen(t_str);
+}
 
 int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
     printf("readdir: %s\n", path);
@@ -100,11 +170,10 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
         path_copy[strlen(path)-1] = 0;
     }
     
-    struct tokens toks;
-    tokenize_path(path_copy, &toks);
-    printf("\t\tTable: %s\n", toks.table);
-    printf("\t\tRecord: %s\n", toks.record);
-    printf("\t\tAttribute: %s\n", toks.attribute);
+    struct tokens *toks = tokenize_path(path_copy);
+    printf("\t\tTable: %s\n", toks->table);
+    printf("\t\tRecord: %s\n", toks->record);
+    printf("\t\tAttribute: %s\n", toks->attribute);
 
     sqlite3_stmt* pstmt;
     int slash_count = COUNT_CHAR(path_copy, '/');
@@ -113,10 +182,10 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
             make_root_select(&pstmt);
             break;
         case 1: // SE SEI DENTRO UNA TABELLA DEVI FARE UNA SELECT SUL ROWID
-            make_table_select(&pstmt, toks.table);
+            make_table_select(&pstmt, toks->table);
             break;
         case 2: // SE SEI DENTRO UN RECORD BASTA FARE UNA SELECT SUL PRAGMA PER OTTENERE I NOMI DEI CAMPI DELLA TABELLA
-            make_record_select(&pstmt, toks.table);
+            make_record_select(&pstmt, toks->table);
             break;
         default:
             fprintf(stderr, "\tHow the fuck did you end up here?");
@@ -141,9 +210,10 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     sqlite3_finalize(pstmt);
 
     free(path_copy);
-    free(toks.table);
-    free(toks.record);
-    free(toks.attribute);
+    free(toks->table);
+    free(toks->record);
+    free(toks->attribute);
+    free(toks);
 
     return 0;
 }
@@ -151,39 +221,45 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
 int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     printf("read: %s\n", path);
 
+    size_t path_len = strlen(path);
+    if (path_len < 7) return -1; // Safety check
+
+    char *noext_path = remove_extension(path);
+    if (!noext_path) return -ENOMEM;
+
+    struct tokens *toks = tokenize_path(noext_path);
+
     struct {
         char *bytes;
         size_t size;
     } content;
 
-    char* noext_path = (const char*)malloc(sizeof(path) - 7);
-    strncpy(noext_path, path, strlen(path) - 7);
-    noext_path[strlen(path) - 7] = 0;
+    content.bytes = NULL;
 
-    struct tokens toks;
-    tokenize_path(noext_path, &toks);
+    if (get_attribute_value(toks, &content.bytes, &content.size) == -1) {
+        free(toks->table); free(toks->record); free(toks->attribute);
+        free(toks); free(noext_path); free(content.bytes);
+        return -1;
+    }
 
-    if (get_attribute_value(&toks, &content.bytes, &content.size) == -1) return -1;
-
-    // printf("\tbytes: %s\n", content.bytes);
-    printf("\tsize: %ld\n", content.size);
-    
-    // EOF
     if (offset >= content.size) {
+        free(toks->table); free(toks->record); free(toks->attribute);
+        free(toks); free(noext_path); free(content.bytes);
         return 0;
     }
 
-    // Calculate the bytes available and eventually clamp them
     size_t bytes_available = content.size - offset;
     if (bytes_available > size) {
         bytes_available = size;
     }
 
     memcpy(buffer, content.bytes + offset, bytes_available);
-    
-    free(toks.table);
-    free(toks.record);
-    free(toks.attribute);
+
+    // Cleanup
+    free(toks->table);
+    free(toks->record);
+    free(toks->attribute);
+    free(toks);
     free(noext_path);
     free(content.bytes);
 
@@ -196,20 +272,25 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     printf("\tsize: %zu\n", size);
     printf("\toffset: %d\n", offset);
 
-    char* noext_path = (const char*)malloc(sizeof(path) - 7);
-    strncpy(noext_path, path, strlen(path) - 7);
-    noext_path[strlen(path) - 7] = 0;
+    char *noext_path = remove_extension(path);
+    if (!noext_path) return -ENOMEM;
     
-    struct tokens toks;
-    tokenize_path(noext_path, &toks);
+    struct tokens *toks = tokenize_path(noext_path);
     
     int append = (offset == 0) ? 0 : 1;
-    int result = update_attribute_value(&toks, buffer, size, append);
+    int result = update_attribute_value(toks, buffer, size, append);
 
-    free(toks.table);
-    free(toks.record);
-    free(toks.attribute);
+    free(toks->table);
+    free(toks->record);
+    free(toks->attribute);
+    free(toks);
     free(noext_path);
 
     return result == 0 ? size : result;
+}
+
+int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi) {
+    // if (insert_record(path, mode) == -1)
+    //     return -1;
+    return 0;
 }
