@@ -163,3 +163,152 @@ void get_table_fks(sqlite3_stmt **pstmt, const char *table) {
 
     int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, pstmt, NULL);
 }
+
+void get_foreign_table_attribute_name(struct tokens *toks, char **ftable, char **fattribute) {
+    printf("get_foreign_table_attribute_name\n");
+    sqlite3_stmt *pstmt;
+
+    char* query_fmt = "SELECT \"table\", \"to\" FROM pragma_foreign_key_list('%s') WHERE \"from\" = '%s'";
+    char query_str[1024];
+    snprintf(query_str, sizeof(query_str), query_fmt, toks->table, toks->attribute);
+    
+    printf("\tquery: %s\n", query_str);
+
+    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(pstmt);
+        return;
+    }
+
+    rc = sqlite3_step(pstmt);
+
+    *ftable = strdup(sqlite3_column_text(pstmt, 0));
+    *fattribute = strdup(sqlite3_column_text(pstmt, 1));
+
+    sqlite3_finalize(pstmt);
+}
+
+int get_all_fkpk_relationships_length(const char *src_table, const char *dst_table) {
+    printf("get_all_fk_pk_relationships_length\n");
+    sqlite3_stmt *pstmt;
+
+    char* query_fmt = "SELECT COUNT(*) FROM pragma_foreign_key_list('%s') WHERE \"table\" = '%s'";
+    char query_str[1024];
+    snprintf(query_str, sizeof(query_str), query_fmt, src_table, dst_table);
+
+    printf("\tquery: %s\n", query_str);
+
+    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(pstmt);
+        return -1;
+    }
+
+    rc = sqlite3_step(pstmt);
+
+    int length = sqlite3_column_int(pstmt, 0);
+
+    sqlite3_finalize(pstmt);
+
+    return length;
+}
+
+void get_all_fkpk_relationships(const char *src_table, const char *dst_table, struct pkfk_relation *pkfk) {
+    printf("get_all_fk_pk_relationships\n");
+    sqlite3_stmt *pstmt;
+
+    char* query_fmt = "SELECT \"from\", \"to\" FROM pragma_foreign_key_list('%s') WHERE \"table\" = '%s'";
+    char query_str[1024];
+    snprintf(query_str, sizeof(query_str), query_fmt, src_table, dst_table);
+
+    printf("\tquery: %s\n", query_str);
+
+    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(pstmt);
+        return;
+    }
+
+    int i = 0;
+    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
+        const char *fk_name = (const char*)sqlite3_column_text(pstmt, 0);
+        const char *pk_name = (const char*)sqlite3_column_text(pstmt, 1);
+
+        printf("\tfk_name: %s\n", fk_name);
+        printf("\tpk_name: %s\n", pk_name);
+
+        pkfk[i].fk_name = strdup(fk_name);
+        pkfk[i].pk_name = strdup(pk_name);
+
+        i++;
+    }
+}
+
+void fill_fk_values(const char *table, const char *record, struct pkfk_relation *pkfk, int pkfk_length) {
+    printf("fill_fk_values\n");
+
+    sqlite3_stmt *pstmt;
+    
+    int str_len = 0;
+    char query_str[1024];
+    str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "SELECT ");
+    
+    int i;
+    for (i = 0; i < pkfk_length-1; i++) {
+        str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s, ", pkfk[i].fk_name);
+    }
+    str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s FROM %s WHERE rowid = ?", pkfk[i].fk_name, table);
+
+    printf("\tquery: %s\n", query_str);
+
+    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
+    if (rc != SQLITE_OK) {
+        printf("\t1 not okay...\n"); 
+        sqlite3_finalize(pstmt); 
+        return;
+    } 
+    
+    rc = sqlite3_bind_text(pstmt, 1, record, -1, SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) {
+        printf("\t2 not okay...\n"); 
+        sqlite3_finalize(pstmt); 
+        return;
+    } 
+
+    rc = sqlite3_step(pstmt);
+
+    for (int i=0; i<pkfk_length; i++) {
+        pkfk[i].value = strdup(sqlite3_column_text(pstmt, i));
+    }
+
+    sqlite3_finalize(pstmt);
+}
+
+int get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_length) {
+    printf("get_rowid_from_pks\n");
+    sqlite3_stmt *pstmt;
+    
+    int str_len = 0;
+    char query_str[1024];
+    str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "SELECT rowid FROM %s WHERE ", table);
+    
+    for (int i = 0; i < pkfk_length; i++) {
+        if (i > 0)
+            str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, " AND ");
+        str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s = '%s'", pkfk[i].pk_name, pkfk[i].value);
+    }
+
+    printf("\tquery: %s\n", query_str);
+
+    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(pstmt);
+        return -1;
+    }
+
+    rc = sqlite3_step(pstmt);
+
+    int row_id = sqlite3_column_int(pstmt, 0);
+    sqlite3_finalize(pstmt);
+    return row_id;
+}

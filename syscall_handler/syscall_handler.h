@@ -23,5 +23,6 @@ int  vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_
 int  vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi);
 int  vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi);
 int  vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi);
+int  vfs2db_readlink(const char* path, char* buffer, size_t size);
 
 #endif // SYSCALL_HANDLER_H

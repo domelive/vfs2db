@@ -9,11 +9,18 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stddef.h>
+#include <stdarg.h>
 
 struct tokens {
     char *table;
     char *record;
     char *attribute;
+};
+
+struct pkfk_relation {
+    char *fk_name;
+    char *pk_name;
+    char *value;
 };
 
 extern sqlite3 *db;
@@ -26,5 +33,10 @@ void make_root_select(sqlite3_stmt **pstmt);
 void make_table_select(sqlite3_stmt **pstmt, const char *table);
 void make_record_select(sqlite3_stmt **pstmt, const char *table);
 void get_table_fks(sqlite3_stmt **pstmt, const char *table);
+void get_foreign_table_attribute_name(struct tokens *toks, char **ftable, char **fattribute);
+int  get_all_fkpk_relationships_length(const char *src_table, const char *dst_table);
+void get_all_fkpk_relationships(const char *src_table, const char *dst_table, struct pkfk_relation *pkfk);
+void fill_fk_values(const char *table, const char *record, struct pkfk_relation *pkfk, int pkfk_length);
+int  get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_length);
 
 #endif // DB_HANDLER_H

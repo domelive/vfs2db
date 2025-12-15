@@ -41,13 +41,14 @@ static inline char *remove_extension(const char *path) {
 static inline int check_symlink(struct tokens* toks) {
     printf("check_symlink\n");
     sqlite3_stmt *pstmt;
-    get_table_fks(&pstmt, toks->table);
+    get_table_fks  (&pstmt, toks->table);
 
+    printf("\tattribute: %s\n", toks->attribute);
     int rc;
     while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
         const char *attr_name = (const char*)sqlite3_column_text(pstmt, 3);
         printf("\tfk: %s\n", attr_name);
-        if (strncmp(attr_name, toks->attribute, strlen(toks->attribute)) == 0) {
+        if (toks->attribute && strncmp(attr_name, toks->attribute, strlen(toks->attribute)) == 0) {
             printf("\tfk found: %s\n", toks->attribute);
             return 1;
         }
@@ -292,5 +293,45 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
 int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi) {
     // if (insert_record(path, mode) == -1)
     //     return -1;
+    return 0;
+}
+
+int vfs2db_readlink(const char* path, char* buffer, size_t size) {
+    printf("readlink\n");
+    char *noext_path = remove_extension(path);
+    if (!noext_path) return -ENOMEM;
+    struct tokens *toks = tokenize_path(noext_path);
+
+    // 1. dalla path capire la tabella esterna del record
+    char *ftable; char* fattribute;
+    get_foreign_table_attribute_name(toks, &ftable, &fattribute);
+
+    // abbiamo il nome della tabella cui campo (toks->attribute) e' riferito
+    // ma attenzione! per ricavare il rowid, abbiamo bisogno di tutte le chiavi primarie
+    // della tabella riferita --> dobbiamo prendere eventuali altri chiavi esterne della tabella riferita
+
+    // lo facciamo accoppiando tutte le chiavi esterne di toks->table che fanno riferimento
+    // a ftable
+    int num = get_all_fkpk_relationships_length(toks->table, ftable);
+    struct pkfk_relation *pkfk = malloc(num * sizeof(struct pkfk_relation));
+    if (!pkfk) return -1;
+    get_all_fkpk_relationships(toks->table, ftable, pkfk);
+    
+    // una volta ottenute queste coppie, devo conoscere i valori delle chiavi esterne
+    fill_fk_values(toks->table, toks->record, pkfk, num);
+
+    // quindi mi basta fare una query del tipo SELECT rowid FROM ftable WHERE pk1=vfk1, pk2=vfk2, ...
+    int row_id = get_rowid_from_pks(ftable, pkfk, num);
+
+    // 6. creare il path del record -> ../../ftable/row_id/fattribute.vfs2db
+    snprintf(buffer, size, "../../%s/%d/%s.vfs2db", ftable, row_id, fattribute);
+
+    free(toks->table);
+    free(toks->record);
+    free(toks->attribute);
+    free(toks);
+    free(ftable);
+    free(fattribute);
+
     return 0;
 }

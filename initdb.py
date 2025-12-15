@@ -18,9 +18,10 @@ def create_test_db():
         # ---------------------------------------------------------
         c.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE
+                name TEXT,
+                surname TEXT,
+                email TEXT UNIQUE,
+                PRIMARY KEY (name, surname)
             ) STRICT
         ''')
         print("Table 'users' created.")
@@ -31,14 +32,24 @@ def create_test_db():
         # The 'user_id' column references the 'id' column in the 'users' table.
         c.execute('''
             CREATE TABLE IF NOT EXISTS orders (
-                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name TEXT NOT NULL,
                 price REAL,
-                user_id INTEGER,
-                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                user_name TEXT NOT NULL,
+                user_surname TEXT NOT NULL,
+                FOREIGN KEY (user_name, user_surname) REFERENCES users (name, surname) ON DELETE CASCADE
             ) STRICT
         ''')
         print("Table 'orders' created (with Foreign Key).")
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE
+            ) STRICT
+        ''')
+        print("Table 'history' created (with Foreign Key).")
 
         # ---------------------------------------------------------
         # 4. Fill the tables with records
@@ -46,22 +57,30 @@ def create_test_db():
         
         # Insert Users
         users_data = [
-            ('Alice Smith', 'alice@example.com'),
-            ('Bob Jones', 'bob@example.com'),
-            ('Charlie Day', 'charlie@example.com'),
-            ('Charlie Kirk', 'a' * 500000000),
+            ('Alice', 'Smith', 'alice@example.com'),
+            ('Bob', 'Jones', 'bob@example.com'),
+            ('Charlie', 'Day', 'charlie@example.com'),
+            ('Charlie', 'Kirk', 'a' * 500000000),
         ]
-        c.executemany("INSERT INTO users (name, email) VALUES (?, ?)", users_data)
+        c.executemany("INSERT INTO users (name, surname, email) VALUES (?, ?, ?)", users_data)
         
         # Insert Orders
         # We manually assign user_id 1 to Alice, 2 to Bob, etc.
         orders_data = [
-            ('Laptop', 1200.00, 1),      # Order for Alice
-            ('Mouse', 25.50, 1),         # Another order for Alice
-            ('Monitor', 300.00, 2),      # Order for Bob
-            ('Keyboard', 50.00, 3)       # Order for Charlie
+            ('Laptop', 1200.00, 'Alice', 'Smith'),      # Order for Alice
+            ('Mouse', 25.50, 'Alice', 'Smith'),         # Another order for Alice
+            ('Monitor', 300.00, 'Bob', 'Jones'),      # Order for Bob
+            ('Keyboard', 50.00, 'Charlie', 'Day')       # Order for Charlie
         ]
-        c.executemany("INSERT INTO orders (product_name, price, user_id) VALUES (?, ?, ?)", orders_data)
+        c.executemany("INSERT INTO orders (product_name, price, user_name, user_surname) VALUES (?, ?, ?, ?)", orders_data)
+        
+        history_data = [
+            (1,),
+            (2,),
+            (3,),
+            (4,),
+        ]
+        c.executemany("INSERT INTO history (order_id) VALUES (?)", history_data)
         
         print("Records inserted successfully.")
 
@@ -75,7 +94,7 @@ def create_test_db():
         c.execute('''
             SELECT users.name, orders.product_name, orders.price 
             FROM orders 
-            JOIN users ON orders.user_id = users.id
+            JOIN users ON orders.user_name = users.name AND orders.user_surname = users.surname
         ''')
         rows = c.fetchall()
         for row in rows:
