@@ -10,20 +10,14 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <stdarg.h>
-
-struct tokens {
-    char *table;
-    char *record;
-    char *attribute;
-};
-
-struct pkfk_relation {
-    char *fk_name;
-    char *pk_name;
-    char *value;
-};
+#include <stdbool.h>
+#include "query_manager.h"
+#include "../utils/types.h"
 
 extern sqlite3 *db;
+
+int  init_db_schema(DbSchema *db_schema);
+int  init_schema(Schema *schema);
 
 int  get_attribute_size(struct tokens* toks);
 int  get_attribute_value(struct tokens* toks, char **bytes, size_t *size);

@@ -1,5 +1,90 @@
 #include "db_handler.h"
 
+int init_db_schema(DbSchema *db_schema) {
+    printf("init_db_schema\n");
+    sqlite3_stmt *pstmt;
+
+    int rc = sqlite3_prepare_v2(db, qm_get_query_str(QUERY_GET_TABLES_NAME), -1, &pstmt, NULL);
+
+    if (rc != SQLITE_OK) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    int i = 0;
+    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
+        const char *name = (const char*)sqlite3_column_text(pstmt, 0);
+        db_schema->tables[i] = malloc(sizeof(Schema));
+        db_schema->tables[i]->name = strdup(name);
+        i++;
+    }
+
+    db_schema->n_tables = i;
+    return 0;
+}
+
+/**
+ * Initialize Schema Structure
+ * @todo Handle error cases properly
+ * 
+ * @brief Initializes the Schema structure by retrieving table information
+ *        from the database using PRAGMA statements.
+ * 
+ * @param schema Pointer to Schema structure to initialize
+ * 
+ * @return 0 on success, -1 on failure
+ */
+int init_schema(Schema *schema) {
+    printf("init_schema\n");
+    sqlite3_stmt *pstmt;
+
+    schema->n_pk = 0;
+    schema->n_attr = 0;
+    schema->n_fks = 0;
+
+    // This query gets: column_name, is_pk, fk_table, fk_column_name
+    char query[1024];
+    snprintf(query, sizeof(query), qm_get_query_str(QUERY_GET_TABLE_INFO), schema->name, schema->name);
+    int rc = sqlite3_prepare_v2(db, query, -1, &pstmt, NULL);
+
+    if (rc != SQLITE_OK) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
+        const char *column_name = sqlite3_column_text(pstmt, 0);
+        const bool is_pk = sqlite3_column_int(pstmt, 1);
+        const char *fk_table = sqlite3_column_text(pstmt, 2);
+        const char *fk_column_name = sqlite3_column_text(pstmt, 3);
+
+        // Check if primary key
+        if (is_pk) {
+            // Add to schema pk field
+            schema->pk[schema->n_pk] = strdup(column_name);
+            schema->n_pk++;
+        }
+        // Check if foreign key
+        else if (fk_table != NULL) {
+            // Populate the schema fks field with the foreign key structure
+            Fk *fk = malloc(sizeof(Fk));
+            fk->from = strdup(column_name);
+            fk->table = strdup(fk_table);
+            fk->to = strdup(fk_column_name);
+
+            // Add fk to schema
+            schema->fks[schema->n_fks] = fk;
+            schema->n_fks++;
+        }
+        // Normal attribute
+        else {
+            // Add to schema attr field
+            schema->attr[schema->n_attr] = strdup(column_name);
+            schema->n_attr++;
+        }
+    }
+}
+
 int get_attribute_size(struct tokens* toks) {
     printf("get_attribute_size\n");
     sqlite3_stmt *pstmt;

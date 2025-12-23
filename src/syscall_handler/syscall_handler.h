@@ -22,7 +22,8 @@
     count;                                                                     \
   })
 
-void vfs2db_destroy(void *private_data);
+void *vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg);
+void  vfs2db_destroy(void *private_data);
 
 int vfs2db_getattr(const char *path, struct stat *st,
                    struct fuse_file_info *fi);

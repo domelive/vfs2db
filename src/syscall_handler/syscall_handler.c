@@ -56,6 +56,42 @@ static inline int check_symlink(struct tokens* toks) {
     return 0;
 }
 
+void *vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
+    printf("init\n");
+
+    // Get all the tables
+    DbSchema db_schema;
+    init_db_schema(&db_schema);
+    printf("\tNumber of tables: %d\n", db_schema.n_tables);
+
+    // For each table, get all the info
+    for (int i=0; i<db_schema.n_tables; i++) {
+        init_schema(db_schema.tables[i]);
+    }
+
+    // Testing
+    for (int i=0; i<db_schema.n_tables; i++) {
+        // Print table name
+        printf("Table: %s\n", db_schema.tables[i]->name);
+        // Print pks
+        for (int j=0; j<db_schema.tables[i]->n_pk; j++) {
+            printf("\tPK: %s\n", db_schema.tables[i]->pk[j]);
+        }
+        // Print fks
+        for (int j=0; j<db_schema.tables[i]->n_fks; j++) {
+            printf("\tFK: %s -> %s(%s)\n", db_schema.tables[i]->fks[j]->from,
+                                           db_schema.tables[i]->fks[j]->table,
+                                           db_schema.tables[i]->fks[j]->to);
+        }
+        // Print attributes
+        for (int j=0; j<db_schema.tables[i]->n_attr; j++) {
+            printf("\tATT: %s\n", db_schema.tables[i]->attr[j]);
+        }
+    }
+
+    return NULL;
+}
+
 void vfs2db_destroy(void *private_data) {
     struct fuse_args *args = (struct fuse_args*) private_data;
     if (db) {
