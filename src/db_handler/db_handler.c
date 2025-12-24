@@ -1,5 +1,49 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+/**
+ * @file   db_handler.c
+ * @author Domenico Livera (domenico.livera@gmail.com)
+ * @author Nicola Travaglini (...)
+ * @brief  Database Handler Source File
+ * @date   Created on 2025-12-23
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include "db_handler.h"
 
+/**
+ * Initialize Database Schema
+ * @todo Handle error cases properly
+ * 
+ * @brief Initializes the DbSchema structure by retrieving table names
+ *        from the database.
+ * 
+ * This function populates the provided DbSchema structure with
+ * the names of all tables present in the database.
+ * 
+ * Uses the following SQL query:
+ * 
+ * - `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';`
+ * 
+ * Where `sqlite_master` is a special table that has the following columns: `| type | name | tbl_name | rootpage | sql |`
+ * 
+ * @param[out] db_schema Pointer to DbSchema structure to initialize
+ * 
+ * @return 0 on success, -1 on failure
+ * 
+ */
 int init_db_schema(DbSchema *db_schema) {
     printf("init_db_schema\n");
     sqlite3_stmt *pstmt;
@@ -28,11 +72,21 @@ int init_db_schema(DbSchema *db_schema) {
  * @todo Handle error cases properly
  * 
  * @brief Initializes the Schema structure by retrieving table information
- *        from the database using PRAGMA statements.
+ *        from the database using `PRAGMA` statements.
  * 
- * @param schema Pointer to Schema structure to initialize
+ * This function populates the provided Schema structure with
+ * information about the table's columns, primary keys, and foreign keys.
+ * 
+ * Uses the following `PRAGMA` statements:
+ * 
+ * - `PRAGMA table_info(table_name)`: column informations `| cid | name | type | notnull | dflt_value | pk |`
+ *  
+ * - `PRAGMA foreign_key_list(table_name)`: foreign key informations `| id | seq | table | from | to | on_update | on_delete | match |`
+ * 
+ * @param[out] schema Pointer to Schema structure to initialize
  * 
  * @return 0 on success, -1 on failure
+ * 
  */
 int init_schema(Schema *schema) {
     printf("init_schema\n");
@@ -83,8 +137,26 @@ int init_schema(Schema *schema) {
             schema->n_attr++;
         }
     }
+    
+    // FIX: finalize the statement?
+    return 0;
 }
 
+/**
+ * Get Attribute Size
+ * @todo Handle error cases properly
+ * 
+ * @brief Retrieves the size (in bytes) of a specific attribute value
+ *        for a given record in a table.
+ * 
+ * This function executes a SQL query to fetch the attribute value
+ * and calculates its size in bytes.
+ * 
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * 
+ * @return Size of the attribute in bytes on success, -1 on failure
+ *  
+ */
 int get_attribute_size(struct tokens* toks) {
     printf("get_attribute_size\n");
     sqlite3_stmt *pstmt;
@@ -125,6 +197,22 @@ int get_attribute_size(struct tokens* toks) {
     return att_size; 
 }
 
+/**
+ * Get Attribute Value
+ * @todo Handle error cases properly
+ * 
+ * @brief Retrieves the value of a specific attribute for a given record in a table.
+ * 
+ * This function executes a SQL query to fetch the attribute value
+ * and returns it as a dynamically allocated string.
+ * 
+ * @param[in]  toks  Pointer to tokens structure containing table, record, and attribute information
+ * @param[out] bytes Pointer to a char pointer where the attribute value will be stored
+ * @param[out] size  Pointer to a size_t variable where the size of the attribute value will be stored
+ * 
+ * @return 0 on success, -1 on failure
+ * 
+ */
 int get_attribute_value(struct tokens* toks, char **bytes, size_t *size) {
     printf("get_attribute_value\n");
 
@@ -155,6 +243,20 @@ int get_attribute_value(struct tokens* toks, char **bytes, size_t *size) {
     return 0;
 }
 
+/**
+ * Get Attribute Type
+ * @todo Handle error cases properly
+ * 
+ * @brief Retrieves the data type of a specific attribute for a given record in a table.
+ * 
+ * This function executes a SQL query to fetch the attribute value
+ * and determines its data type.
+ * 
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * 
+ * @return SQLite data type constant (e.g., SQLITE_INTEGER, SQLITE_TEXT) on success, -1 on failure
+ * 
+ */
 int get_attribute_type(struct tokens *toks) {
     printf("get_attribute_type\n");
 
@@ -184,6 +286,23 @@ int get_attribute_type(struct tokens *toks) {
     return type;
 }
 
+/**
+ * Update Attribute Value
+ * @todo Handle error cases properly
+ * 
+ * @brief Updates the value of a specific attribute for a given record in a table.
+ * 
+ * This function executes a SQL `UPDATE` statement to modify the attribute value.
+ * It supports both overwriting the existing value and appending to it.
+ * 
+ * @param[in] toks   Pointer to tokens structure containing table, record, and attribute information
+ * @param[in] buffer Pointer to the new value to set
+ * @param[in] size   Size of the new value
+ * @param[in] append If non-zero, appends the new value to the existing value; otherwise, overwrites it
+ * 
+ * @return 0 on success, -1 on failure
+ * 
+ */
 int update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
     printf("update_attribute_value\n");
     sqlite3_stmt *pstmt;
@@ -212,6 +331,19 @@ int update_attribute_value(struct tokens* toks, const char* buffer, size_t size,
     return (rc == SQLITE_DONE) ? 0 : -1; 
 }
 
+/**
+ * Make Root Select Statement
+ * 
+ * @brief Prepares a SQL statement to select all table names from the database.
+ * 
+ * This function prepares a SQL statement that retrieves the names of all tables
+ * in the database, excluding SQLite's internal tables.
+ * 
+ * @param[out] pstmt Pointer to the SQLite statement to be prepared
+ * 
+ * @deprecated Use `qm_get_query_str(QUERY_GET_TABLES_NAME)` instead.
+ * 
+ */
 void make_root_select(sqlite3_stmt **pstmt) {
     int rc = sqlite3_prepare_v2(db,
           "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
@@ -219,6 +351,15 @@ void make_root_select(sqlite3_stmt **pstmt) {
     if (rc != SQLITE_OK) printf("Not okay...\n");
 }
 
+/**
+ * Make Table Select Statement
+ * 
+ * @brief Prepares a SQL statement to select all row IDs from a specific table.
+ * 
+ * @param[out] pstmt Pointer to the SQLite statement to be prepared
+ * @param[in] table Name of the table to select from
+ * 
+ */
 void make_table_select(sqlite3_stmt **pstmt, const char *table) {
     char *query_fmt = "SELECT rowid from %s";
     char query_str[1024];
@@ -228,6 +369,15 @@ void make_table_select(sqlite3_stmt **pstmt, const char *table) {
              -1, pstmt, NULL);
 }
 
+/**
+ * Make Record Select Statement
+ * 
+ * @brief Prepares a SQL statement to select all column names from a specific table.
+ * 
+ * @param[out] pstmt Pointer to the SQLite statement to be prepared
+ * @param[in] table Name of the table to select from
+ * 
+ */
 void make_record_select(sqlite3_stmt **pstmt, const char *table) {
     char *query_fmt = "SELECT name FROM pragma_table_info(\"%s\");";
     char query_str[1024];
@@ -237,6 +387,15 @@ void make_record_select(sqlite3_stmt **pstmt, const char *table) {
           -1, pstmt, NULL);
 }
 
+/**
+ * Get Table Foreign Keys
+ * 
+ * @brief Prepares a SQL statement to retrieve all foreign keys from a specific table.
+ * 
+ * @param[out] pstmt Pointer to the SQLite statement to be prepared
+ * @param[in] table Name of the table to retrieve foreign keys from
+ * 
+ */
 void get_table_fks(sqlite3_stmt **pstmt, const char *table) {
     printf("get_table_fks\n");
 
@@ -249,6 +408,16 @@ void get_table_fks(sqlite3_stmt **pstmt, const char *table) {
     int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, pstmt, NULL);
 }
 
+/**
+ * Get Foreign Table and Attribute Name
+ * 
+ * @brief Retrieves the foreign table name and attribute name for a given foreign key.
+ * 
+ * @param[in]  toks       Pointer to tokens structure containing table, record, and attribute information
+ * @param[out] ftable     Pointer to a char pointer where the foreign table name will be stored
+ * @param[out] fattribute Pointer to a char pointer where the foreign attribute name will be stored
+ * 
+ */
 void get_foreign_table_attribute_name(struct tokens *toks, char **ftable, char **fattribute) {
     printf("get_foreign_table_attribute_name\n");
     sqlite3_stmt *pstmt;
@@ -273,6 +442,16 @@ void get_foreign_table_attribute_name(struct tokens *toks, char **ftable, char *
     sqlite3_finalize(pstmt);
 }
 
+/**
+ * Get All Foreign Key to Primary Key Relationships Length
+ * 
+ * @brief Retrieves the count of all foreign key to primary key relationships between two tables.
+ * 
+ * @param[in] src_table Source table name
+ * @param[in] dst_table Destination table name
+ * 
+ * @return The count of foreign key to primary key relationships on success, -1 on failure
+ */
 int get_all_fkpk_relationships_length(const char *src_table, const char *dst_table) {
     printf("get_all_fk_pk_relationships_length\n");
     sqlite3_stmt *pstmt;
@@ -298,6 +477,16 @@ int get_all_fkpk_relationships_length(const char *src_table, const char *dst_tab
     return length;
 }
 
+/**
+ * Get All Foreign Key to Primary Key Relationships
+ * 
+ * @brief Retrieves all foreign key to primary key relationships between two tables.
+ * 
+ * @param[in]  src_table Source table name
+ * @param[in]  dst_table Destination table name
+ * @param[out] pkfk      Array of pkfk_relation structures to store the relationships
+ * 
+ */
 void get_all_fkpk_relationships(const char *src_table, const char *dst_table, struct pkfk_relation *pkfk) {
     printf("get_all_fk_pk_relationships\n");
     sqlite3_stmt *pstmt;
@@ -329,6 +518,18 @@ void get_all_fkpk_relationships(const char *src_table, const char *dst_table, st
     }
 }
 
+/**
+ * Fill Foreign Key Values
+ * 
+ * @brief Fills the values of foreign keys in the provided pkfk_relation array
+ *        based on the specified table and record.
+ * 
+ * @param[in]  table     Name of the table containing the foreign keys
+ * @param[in]  record    Record identifier (rowid) to fetch the foreign key values
+ * @param[out] pkfk      Array of pkfk_relation structures to fill with foreign key values
+ * @param[in]  pkfk_length Length of the pkfk_relation array
+ * 
+ */
 void fill_fk_values(const char *table, const char *record, struct pkfk_relation *pkfk, int pkfk_length) {
     printf("fill_fk_values\n");
 
@@ -369,6 +570,18 @@ void fill_fk_values(const char *table, const char *record, struct pkfk_relation 
     sqlite3_finalize(pstmt);
 }
 
+/**
+ * Get Row ID from Primary Keys
+ * 
+ * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
+ * 
+ * @param[in] table     Name of the table to query
+ * @param[in] pkfk      Array of pkfk_relation structures containing primary key names and values
+ * @param[in] pkfk_length Length of the pkfk_relation array
+ * 
+ * @return The row ID of the matching record on success, -1 on failure
+ * 
+ */
 int get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_length) {
     printf("get_rowid_from_pks\n");
     sqlite3_stmt *pstmt;

@@ -1,7 +1,40 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+/**
+ * @file   syscall_handler.c
+ * @author Domenico Livera (domenico.livera@gmail.com)
+ * @author Nicola Travaglini (...)
+ * @brief  Implementation of syscall handlers for the VFS2DB filesystem.
+ * @date   Created on 2025-12-23
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include "syscall_handler.h"
 
-extern sqlite3 *db;
+extern sqlite3 *db; /**< Database connection handle */
 
+/**
+ * Tokenize Path
+ * 
+ * @brief Splits the given path into its components: table, record, and attribute.
+ * 
+ * @param[in] path The file path to tokenize
+ * 
+ * @return Pointer to a tokens structure containing the split components
+ * 
+ */
 static inline struct tokens* tokenize_path(const char* path) {
     // path := /table/record/attribute
     // path := table/record/attribute
@@ -27,6 +60,16 @@ static inline struct tokens* tokenize_path(const char* path) {
     return toks;
 }
 
+/**
+ * Remove Extension
+ * 
+ * @brief Removes the ".vfs2db" extension from the given path.
+ * 
+ * @param[in] path The file path from which to remove the extension
+ * 
+ * @return Pointer to a new string without the extension
+ * 
+ */
 static inline char *remove_extension(const char *path) {
     int noext_path_length = strlen(path) - 7;
     if (noext_path_length <= 0) return NULL;
@@ -38,6 +81,16 @@ static inline char *remove_extension(const char *path) {
     return noext_path;
 }
 
+/**
+ * Check Symlink
+ * 
+ * @brief Checks if the given attribute in the tokens structure is a foreign key.
+ * 
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * 
+ * @return 1 if the attribute is a foreign key, 0 otherwise
+ * 
+ */
 static inline int check_symlink(struct tokens* toks) {
     printf("check_symlink\n");
     sqlite3_stmt *pstmt;
@@ -56,6 +109,14 @@ static inline int check_symlink(struct tokens* toks) {
     return 0;
 }
 
+/**
+ * VFS2DB Init
+ * 
+ * @brief Initializes the VFS2DB filesystem by loading the database schema.
+ * 
+ * @return Pointer to private data (NULL in this case)
+ * 
+ */
 void *vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     printf("init\n");
 
@@ -92,6 +153,14 @@ void *vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     return NULL;
 }
 
+/**
+ * VFS2DB Destroy
+ * 
+ * @brief Cleans up resources when the VFS2DB filesystem is unmounted.
+ * 
+ * @param[in] private_data Pointer to private data (not used in this case)
+ * 
+ */
 void vfs2db_destroy(void *private_data) {
     struct fuse_args *args = (struct fuse_args*) private_data;
     if (db) {
@@ -103,6 +172,18 @@ void vfs2db_destroy(void *private_data) {
     printf("fuse_opt_free_args executed correctly.\n");
 }
 
+/**
+ * VFS2DB Getattr
+ * 
+ * @brief Retrieves the attributes of a file or directory in the VFS2DB filesystem.
+ * 
+ * @param[in]  path  The file or directory path
+ * @param[out] st    Pointer to a stat structure to be filled with attributes
+ * @param[in]  fi    Pointer to fuse_file_info structure (not used in this case)
+ * 
+ * @return 0 on success, negative error code on failure
+ * 
+ */
 int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
     printf("getattr: %s\n", path);
 
@@ -157,6 +238,19 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
     return 0;
 }
 
+/**
+ * VFS2DB Getxattr
+ * 
+ * @brief Retrieves the extended attribute of a file in the VFS2DB filesystem.
+ * 
+ * @param[in]  path  The file path
+ * @param[in]  name  The name of the extended attribute to retrieve
+ * @param[out] value Pointer to a buffer where the attribute value will be stored
+ * @param[in]  size  Size of the buffer
+ * 
+ * @return Size of the attribute value on success, negative error code on failure
+ * 
+ */
 int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size) {
     if (strcmp(name, "user.type") != 0) return -ENODATA;
 
@@ -191,6 +285,21 @@ int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size
     return strlen(t_str);
 }
 
+/**
+ * VFS2DB Readdir
+ * 
+ * @brief Reads the contents of a directory in the VFS2DB filesystem.
+ * 
+ * @param[in]  path    The directory path
+ * @param[out] buffer  Pointer to a buffer where directory entries will be stored
+ * @param[in]  filler  Function pointer to add entries to the buffer
+ * @param[in]  offset  Offset within the directory (not used in this case)
+ * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
+ * @param[in]  flags   Flags for reading the directory (not used in this case)
+ * 
+ * @return 0 on success, negative error code on failure
+ * 
+ */
 int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
     printf("readdir: %s\n", path);
     filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
@@ -255,6 +364,20 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     return 0;
 }
 
+/**
+ * VFS2DB Read
+ * 
+ * @brief Reads data from a file in the VFS2DB filesystem.
+ * 
+ * @param[in]  path    The file path
+ * @param[out] buffer  Buffer to store the read data
+ * @param[in]  size    Size of the buffer
+ * @param[in]  offset  Offset within the file to start reading
+ * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
+ * 
+ * @return Number of bytes read on success, negative error code on failure
+ * 
+ */
 int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     printf("read: %s\n", path);
 
@@ -303,6 +426,20 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     return bytes_available;
 }
 
+/**
+ * VFS2DB Write
+ * 
+ * @brief Writes data to a file in the VFS2DB filesystem.
+ * 
+ * @param[in] path    The file path
+ * @param[in] buffer  Buffer containing the data to write
+ * @param[in] size    Size of the data to write
+ * @param[in] offset  Offset within the file to start writing
+ * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
+ * 
+ * @return Number of bytes written on success, negative error code on failure
+ * 
+ */
 int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     printf("write: %s\n", path);
     printf("\tbuffer: %s\n", buffer);
@@ -326,12 +463,37 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     return result == 0 ? size : result;
 }
 
+/**
+ * VFS2DB Create
+ * @todo Implement the function to insert a new record in the database
+ * 
+ * @brief Creates a new file in the VFS2DB filesystem, which corresponds to inserting a new record in the database.
+ * 
+ * @param[in] path The file path to create
+ * @param[in] mode The file mode (permissions)
+ * @param[in] fi   Pointer to fuse_file_info structure (not used in this case
+ * 
+ * @return 0 on success, negative error code on failure
+ * 
+ */
 int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi) {
     // if (insert_record(path, mode) == -1)
     //     return -1;
     return 0;
 }
 
+/**
+ * VFS2DB Readlink
+ * 
+ * @brief Reads the target of a symbolic link in the VFS2DB filesystem.
+ * 
+ * @param[in] path   The symbolic link path
+ * @param[out] buffer Buffer to store the link target
+ * @param[in] size   Size of the buffer
+ * 
+ * @return 0 on success, negative error code on failure
+ * 
+ */
 int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     printf("readlink\n");
     char *noext_path = remove_extension(path);
