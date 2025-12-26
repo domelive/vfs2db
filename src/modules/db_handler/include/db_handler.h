@@ -36,8 +36,8 @@
 #include <stdbool.h>
 
 #include "query_manager.h"
-#include "../utils/types.h"
-#include "../utils/errors.h"
+#include "types.h"
+#include "errors.h"
 
 extern sqlite3* db;
 extern DbSchema* db_schema;

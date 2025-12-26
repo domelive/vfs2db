@@ -11,7 +11,7 @@ FUSE driver to navigate an SQL database just like a filesystem.
     - [x] pragma init
     - [x] errors
     - [x] query manager
-    - [ ] CMake building
+    - [x] CMake building
     - [ ] db_schema/schema hashmap
     - [ ] (logging & debugging)
     - [ ] ns-programming

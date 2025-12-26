@@ -21,7 +21,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "syscall_handler/syscall_handler.h"
+#include "syscall_handler.h"
 
 sqlite3* db = NULL;
 DbSchema* db_schema = NULL;

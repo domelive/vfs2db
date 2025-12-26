@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "../utils/errors.h"
+#include "errors.h"
 
 /**
  * Query Identifiers
