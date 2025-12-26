@@ -3,7 +3,7 @@
 /**
  * @file   db_handler.h
  * @author Domenico Livera (domenico.livera@gmail.com)
- * @author Nicola Travaglini (...)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Database Handler Header File
  * @date   Created on 2025-12-23
  * 
@@ -34,26 +34,21 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdbool.h>
+
 #include "query_manager.h"
 #include "../utils/types.h"
+#include "../utils/errors.h"
 
-extern sqlite3 *db;
+extern sqlite3* db;
+extern DbSchema* db_schema;
 
-int  init_db_schema(DbSchema *db_schema);
-int  init_schema(Schema *schema);
-
-int  get_attribute_size(struct tokens* toks);
-int  get_attribute_value(struct tokens* toks, char **bytes, size_t *size);
-int  get_attribute_type(struct tokens *toks);
-int  update_attribute_value(struct tokens* toks, const char *buffer, size_t size, int append);
-void make_root_select(sqlite3_stmt **pstmt);
-void make_table_select(sqlite3_stmt **pstmt, const char *table);
-void make_record_select(sqlite3_stmt **pstmt, const char *table);
-void get_table_fks(sqlite3_stmt **pstmt, const char *table);
-void get_foreign_table_attribute_name(struct tokens *toks, char **ftable, char **fattribute);
-int  get_all_fkpk_relationships_length(const char *src_table, const char *dst_table);
-void get_all_fkpk_relationships(const char *src_table, const char *dst_table, struct pkfk_relation *pkfk);
-void fill_fk_values(const char *table, const char *record, struct pkfk_relation *pkfk, int pkfk_length);
-int  get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_length);
+status_t init_db_schema(DbSchema* db_schema);
+status_t init_schema(Schema* schema);
+status_t get_attribute_bytes(struct tokens* toks, char** bytes);
+status_t get_attribute_size(struct tokens* toks, size_t* size);
+status_t get_attribute_type(struct tokens* toks, int* type);
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append);
+status_t get_table_rowids(const char* table, char* records[], int* n_records);
+status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks, int* row_id);
 
 #endif // DB_HANDLER_H

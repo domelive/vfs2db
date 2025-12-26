@@ -3,7 +3,7 @@
 /**
  * @file   const.h
  * @author Domenico Livera (domenico.livera@gmail.com)
- * @author Nicola Travaglini (...)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Constant definitions and utility macros.
  * @date   Created on 2025-12-23
  * 

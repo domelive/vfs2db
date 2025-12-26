@@ -3,7 +3,7 @@
 /**
  * @file   db_handler.c
  * @author Domenico Livera (domenico.livera@gmail.com)
- * @author Nicola Travaglini (...)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Database Handler Source File
  * @date   Created on 2025-12-23
  * 
@@ -44,19 +44,12 @@
  * @return 0 on success, -1 on failure
  * 
  */
-int init_db_schema(DbSchema *db_schema) {
+status_t init_db_schema(DbSchema *db_schema) {
     printf("init_db_schema\n");
-    sqlite3_stmt *pstmt;
-
-    int rc = sqlite3_prepare_v2(db, qm_get_query_str(QUERY_GET_TABLES_NAME), -1, &pstmt, NULL);
-
-    if (rc != SQLITE_OK) {
-        printf("\t%s\n", sqlite3_errmsg(db));
-        return -1;
-    }
+    sqlite3_stmt *pstmt = qm_get_static_query_statement(QUERY_SELECT_TABLES_NAME);
 
     int i = 0;
-    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
+    while (sqlite3_step(pstmt) == SQLITE_ROW) {
         const char *name = (const char*)sqlite3_column_text(pstmt, 0);
         db_schema->tables[i] = malloc(sizeof(Schema));
         db_schema->tables[i]->name = strdup(name);
@@ -64,7 +57,8 @@ int init_db_schema(DbSchema *db_schema) {
     }
 
     db_schema->n_tables = i;
-    return 0;
+
+    return STATUS_OK;
 }
 
 /**
@@ -88,7 +82,7 @@ int init_db_schema(DbSchema *db_schema) {
  * @return 0 on success, -1 on failure
  * 
  */
-int init_schema(Schema *schema) {
+status_t init_schema(Schema *schema) {
     printf("init_schema\n");
     sqlite3_stmt *pstmt;
 
@@ -97,21 +91,13 @@ int init_schema(Schema *schema) {
     schema->n_fks = 0;
 
     // This query gets: column_name, is_pk, fk_table, fk_column_name
-    char query[1024];
-    snprintf(query, sizeof(query), qm_get_query_str(QUERY_GET_TABLE_INFO), schema->name, schema->name);
-    int rc = sqlite3_prepare_v2(db, query, -1, &pstmt, NULL);
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_INFO, schema->name, schema->name);
 
-    if (rc != SQLITE_OK) {
-        printf("\t%s\n", sqlite3_errmsg(db));
-        return -1;
-    }
-
-    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
-        const char *column_name = sqlite3_column_text(pstmt, 0);
-        const bool is_pk = sqlite3_column_int(pstmt, 1);
-        const char *fk_table = sqlite3_column_text(pstmt, 2);
-        const char *fk_column_name = sqlite3_column_text(pstmt, 3);
-
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *column_name = sqlite3_column_text(stmt, 0);
+        const bool is_pk = sqlite3_column_int(stmt, 1);
+        const char *fk_table = sqlite3_column_text(stmt, 2);
+        const char *fk_column_name = sqlite3_column_text(stmt, 3);
         // Check if primary key
         if (is_pk) {
             // Add to schema pk field
@@ -138,8 +124,8 @@ int init_schema(Schema *schema) {
         }
     }
     
-    // FIX: finalize the statement?
-    return 0;
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
 }
 
 /**
@@ -157,7 +143,7 @@ int init_schema(Schema *schema) {
  * @return Size of the attribute in bytes on success, -1 on failure
  *  
  */
-int get_attribute_size(struct tokens* toks) {
+status_t get_attribute_size(struct tokens* toks, size_t *size) {
     printf("get_attribute_size\n");
     sqlite3_stmt *pstmt;
 
@@ -166,42 +152,40 @@ int get_attribute_size(struct tokens* toks) {
     printf("\t\ttable: %s\n", toks->table);
     printf("\t\trecord: %s\n", toks->record);
 
-    char *query_fmt = "SELECT %s FROM %s WHERE rowid = ?";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, toks->attribute, toks->table);
-    printf("\tquery: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db,
-          (const char*) query_str,
-          -1, &pstmt, NULL);
-
-    if (rc != SQLITE_OK) return -1;
-    rc = sqlite3_bind_text(pstmt, 1, toks->record, -1, SQLITE_TRANSIENT);
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
     
-    if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
-    rc = sqlite3_step(pstmt);
-
+    if(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+    
     // If there's no record matching the query (should not be possible)
-    if (rc != SQLITE_ROW) {
-        printf("\tNo record matching query\n");
-        sqlite3_finalize(pstmt);
-        return -1;
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
     }
 
     // Calculate the bytes of the attribute
-    size_t att_size = sqlite3_column_bytes(pstmt, 0);
-    printf("\tattribute_size: %ld", att_size);
-    if (att_size < 0) return -1;
-
-    sqlite3_finalize(pstmt);
-    return att_size; 
+    *size = sqlite3_column_bytes(stmt, 0);
+    
+    if (*size < 0) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+    printf("\tattribute_size: %ld\n", *size);
+    
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
 }
 
 /**
- * Get Attribute Value
+ * Get Attribute Bytes
  * @todo Handle error cases properly
  * 
- * @brief Retrieves the value of a specific attribute for a given record in a table.
+ * @brief Retrieves the bytes of a specific attribute for a given record in a table.
  * 
  * This function executes a SQL query to fetch the attribute value
  * and returns it as a dynamically allocated string.
@@ -213,34 +197,27 @@ int get_attribute_size(struct tokens* toks) {
  * @return 0 on success, -1 on failure
  * 
  */
-int get_attribute_value(struct tokens* toks, char **bytes, size_t *size) {
+status_t get_attribute_bytes(struct tokens* toks, char **bytes) {
     printf("get_attribute_value\n");
-
-    sqlite3_stmt *pstmt;
-
-    char *query_fmt = "SELECT %s FROM %s WHERE rowid = ?";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, toks->attribute, toks->table);
-    printf("\tquery: %s\n", query_str);
     
-    int rc = sqlite3_prepare_v2(db, query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) return -1;
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
 
-    rc = sqlite3_bind_text(pstmt, 1, toks->record, -1, SQLITE_TRANSIENT);
-    if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
-
-    rc = sqlite3_step(pstmt);
-    if (rc != SQLITE_ROW) {
-        printf("\tNo record matching query\n");
-        sqlite3_finalize(pstmt);
-        return -1;
+    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) { 
+        printf("\t%s\n", sqlite3_errmsg(db));        
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR; 
     }
 
-    *bytes = strdup(sqlite3_column_text(pstmt, 0));
-    *size = (size_t)sqlite3_column_bytes(pstmt, 0);
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        printf("\t%s\n", sqlite3_errmsg(db));        
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
 
-    sqlite3_finalize(pstmt);
-    return 0;
+    *bytes = strdup(sqlite3_column_text(stmt, 0));
+
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
 }
 
 /**
@@ -257,33 +234,27 @@ int get_attribute_value(struct tokens* toks, char **bytes, size_t *size) {
  * @return SQLite data type constant (e.g., SQLITE_INTEGER, SQLITE_TEXT) on success, -1 on failure
  * 
  */
-int get_attribute_type(struct tokens *toks) {
+status_t get_attribute_type(struct tokens *toks, int* type) {
     printf("get_attribute_type\n");
 
-    sqlite3_stmt *pstmt;
+    sqlite3_stmt *stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
 
-    char *query_fmt = "SELECT %s FROM %s WHERE rowid = ?";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, toks->attribute, toks->table);
-    printf("\tquery: %s\n", query_str);
-    
-    int rc = sqlite3_prepare_v2(db, query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) return -1;
-
-    rc = sqlite3_bind_text(pstmt, 1, toks->record, -1, SQLITE_TRANSIENT);
-    if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
-
-    rc = sqlite3_step(pstmt);
-    if (rc != SQLITE_ROW) {
-        printf("\tNo record matching query\n");
-        sqlite3_finalize(pstmt);
-        return -1;
+    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
     }
 
-    int type = sqlite3_column_type(pstmt, 0);
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
+    *type = sqlite3_column_type(stmt, 0);
     
-    sqlite3_finalize(pstmt);
-    return type;
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
 }
 
 /**
@@ -303,271 +274,65 @@ int get_attribute_type(struct tokens *toks) {
  * @return 0 on success, -1 on failure
  * 
  */
-int update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
     printf("update_attribute_value\n");
-    sqlite3_stmt *pstmt;
-
-    const char* query = (append == 0) 
-        ? "UPDATE %s SET %s = ? WHERE rowid = ?"
-        : "UPDATE %s SET %s = \"%s\" || ? WHERE rowid = ?"; 
     
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query, toks->table, toks->attribute, toks->attribute);
+    sqlite3_stmt *stmt = (append == 0)
+        ? qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->attribute, toks->table)
+        : qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE_APPEND, toks->attribute, toks->table);
 
-    printf("\tquery_str: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db, query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) return -1;
-
-    rc = sqlite3_bind_text(pstmt, 1, buffer, (int)size, SQLITE_TRANSIENT);
-    if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
-
-    rc = sqlite3_bind_text(pstmt, 2, toks->record, -1, SQLITE_TRANSIENT);
-    if (rc != SQLITE_OK) { sqlite3_finalize(pstmt); return -1; }
-
-    rc = sqlite3_step(pstmt);
-    sqlite3_finalize(pstmt);
-
-    return (rc == SQLITE_DONE) ? 0 : -1; 
-}
-
-/**
- * Make Root Select Statement
- * 
- * @brief Prepares a SQL statement to select all table names from the database.
- * 
- * This function prepares a SQL statement that retrieves the names of all tables
- * in the database, excluding SQLite's internal tables.
- * 
- * @param[out] pstmt Pointer to the SQLite statement to be prepared
- * 
- * @deprecated Use `qm_get_query_str(QUERY_GET_TABLES_NAME)` instead.
- * 
- */
-void make_root_select(sqlite3_stmt **pstmt) {
-    int rc = sqlite3_prepare_v2(db,
-          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
-          -1, pstmt, NULL);
-    if (rc != SQLITE_OK) printf("Not okay...\n");
-}
-
-/**
- * Make Table Select Statement
- * 
- * @brief Prepares a SQL statement to select all row IDs from a specific table.
- * 
- * @param[out] pstmt Pointer to the SQLite statement to be prepared
- * @param[in] table Name of the table to select from
- * 
- */
-void make_table_select(sqlite3_stmt **pstmt, const char *table) {
-    char *query_fmt = "SELECT rowid from %s";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, table);
-    int rc = sqlite3_prepare_v2(db,
-             (const char*)query_str,
-             -1, pstmt, NULL);
-}
-
-/**
- * Make Record Select Statement
- * 
- * @brief Prepares a SQL statement to select all column names from a specific table.
- * 
- * @param[out] pstmt Pointer to the SQLite statement to be prepared
- * @param[in] table Name of the table to select from
- * 
- */
-void make_record_select(sqlite3_stmt **pstmt, const char *table) {
-    char *query_fmt = "SELECT name FROM pragma_table_info(\"%s\");";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, table);
-    int rc = sqlite3_prepare_v2(db,
-          (const char*)query_str,
-          -1, pstmt, NULL);
-}
-
-/**
- * Get Table Foreign Keys
- * 
- * @brief Prepares a SQL statement to retrieve all foreign keys from a specific table.
- * 
- * @param[out] pstmt Pointer to the SQLite statement to be prepared
- * @param[in] table Name of the table to retrieve foreign keys from
- * 
- */
-void get_table_fks(sqlite3_stmt **pstmt, const char *table) {
-    printf("get_table_fks\n");
-
-    char* query_fmt = "SELECT * FROM pragma_foreign_key_list('%s')";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, table);
-    
-    printf("\tquery: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, pstmt, NULL);
-}
-
-/**
- * Get Foreign Table and Attribute Name
- * 
- * @brief Retrieves the foreign table name and attribute name for a given foreign key.
- * 
- * @param[in]  toks       Pointer to tokens structure containing table, record, and attribute information
- * @param[out] ftable     Pointer to a char pointer where the foreign table name will be stored
- * @param[out] fattribute Pointer to a char pointer where the foreign attribute name will be stored
- * 
- */
-void get_foreign_table_attribute_name(struct tokens *toks, char **ftable, char **fattribute) {
-    printf("get_foreign_table_attribute_name\n");
-    sqlite3_stmt *pstmt;
-
-    char* query_fmt = "SELECT \"table\", \"to\" FROM pragma_foreign_key_list('%s') WHERE \"from\" = '%s'";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, toks->table, toks->attribute);
-    
-    printf("\tquery: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) {
-        sqlite3_finalize(pstmt);
-        return;
+    if (sqlite3_bind_text(stmt, 1, buffer, (int)size, SQLITE_TRANSIENT) != SQLITE_OK) { 
+        sqlite3_finalize(stmt);
+        printf("\t%s\n", sqlite3_errmsg(db));
+        return STATUS_DB_ERROR; 
     }
 
-    rc = sqlite3_step(pstmt);
+    if (sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        printf("\t%s\n", sqlite3_errmsg(db));
+        return STATUS_DB_ERROR;
+    }
 
-    *ftable = strdup(sqlite3_column_text(pstmt, 0));
-    *fattribute = strdup(sqlite3_column_text(pstmt, 1));
-
-    sqlite3_finalize(pstmt);
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        printf("\t%s\n", sqlite3_errmsg(db));
+        return STATUS_DB_ERROR;
+    }
+    
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
 }
 
 /**
- * Get All Foreign Key to Primary Key Relationships Length
+ * Get Table Row IDs
  * 
- * @brief Retrieves the count of all foreign key to primary key relationships between two tables.
+ * @brief Prepares and executes a SQL statement to select all row IDs from a specified table.
  * 
- * @param[in] src_table Source table name
- * @param[in] dst_table Destination table name
+ * @param[in]  table      Name of the table to query
+ * @param[out] records    Array of strings to store the retrieved row IDs
+ * @param[out] n_records  Pointer to an integer to store the number of retrieved records
  * 
- * @return The count of foreign key to primary key relationships on success, -1 on failure
- */
-int get_all_fkpk_relationships_length(const char *src_table, const char *dst_table) {
-    printf("get_all_fk_pk_relationships_length\n");
-    sqlite3_stmt *pstmt;
-
-    char* query_fmt = "SELECT COUNT(*) FROM pragma_foreign_key_list('%s') WHERE \"table\" = '%s'";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, src_table, dst_table);
-
-    printf("\tquery: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) {
-        sqlite3_finalize(pstmt);
-        return -1;
-    }
-
-    rc = sqlite3_step(pstmt);
-
-    int length = sqlite3_column_int(pstmt, 0);
-
-    sqlite3_finalize(pstmt);
-
-    return length;
-}
-
-/**
- * Get All Foreign Key to Primary Key Relationships
- * 
- * @brief Retrieves all foreign key to primary key relationships between two tables.
- * 
- * @param[in]  src_table Source table name
- * @param[in]  dst_table Destination table name
- * @param[out] pkfk      Array of pkfk_relation structures to store the relationships
+ * @return 0 on success, -1 on failure
  * 
  */
-void get_all_fkpk_relationships(const char *src_table, const char *dst_table, struct pkfk_relation *pkfk) {
-    printf("get_all_fk_pk_relationships\n");
-    sqlite3_stmt *pstmt;
+status_t get_table_rowids(const char *table, char *records[], int *n_records) {
+    sqlite3_stmt *stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_ROWIDS, table);
 
-    char* query_fmt = "SELECT \"from\", \"to\" FROM pragma_foreign_key_list('%s') WHERE \"table\" = '%s'";
-    char query_str[1024];
-    snprintf(query_str, sizeof(query_str), query_fmt, src_table, dst_table);
-
-    printf("\tquery: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) {
-        sqlite3_finalize(pstmt);
-        return;
+    if (stmt == NULL) {
+        printf("Failed to prepare table select statement for table %s\n", table);
+        return STATUS_DB_ERROR;
     }
 
-    int i = 0;
-    while ((rc = sqlite3_step(pstmt)) == SQLITE_ROW) {
-        const char *fk_name = (const char*)sqlite3_column_text(pstmt, 0);
-        const char *pk_name = (const char*)sqlite3_column_text(pstmt, 1);
-
-        printf("\tfk_name: %s\n", fk_name);
-        printf("\tpk_name: %s\n", pk_name);
-
-        pkfk[i].fk_name = strdup(fk_name);
-        pkfk[i].pk_name = strdup(pk_name);
-
-        i++;
-    }
-}
-
-/**
- * Fill Foreign Key Values
- * 
- * @brief Fills the values of foreign keys in the provided pkfk_relation array
- *        based on the specified table and record.
- * 
- * @param[in]  table     Name of the table containing the foreign keys
- * @param[in]  record    Record identifier (rowid) to fetch the foreign key values
- * @param[out] pkfk      Array of pkfk_relation structures to fill with foreign key values
- * @param[in]  pkfk_length Length of the pkfk_relation array
- * 
- */
-void fill_fk_values(const char *table, const char *record, struct pkfk_relation *pkfk, int pkfk_length) {
-    printf("fill_fk_values\n");
-
-    sqlite3_stmt *pstmt;
-    
-    int str_len = 0;
-    char query_str[1024];
-    str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "SELECT ");
-    
-    int i;
-    for (i = 0; i < pkfk_length-1; i++) {
-        str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s, ", pkfk[i].fk_name);
-    }
-    str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s FROM %s WHERE rowid = ?", pkfk[i].fk_name, table);
-
-    printf("\tquery: %s\n", query_str);
-
-    int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
-    if (rc != SQLITE_OK) {
-        printf("\t1 not okay...\n"); 
-        sqlite3_finalize(pstmt); 
-        return;
-    } 
-    
-    rc = sqlite3_bind_text(pstmt, 1, record, -1, SQLITE_TRANSIENT);
-    if (rc != SQLITE_OK) {
-        printf("\t2 not okay...\n"); 
-        sqlite3_finalize(pstmt); 
-        return;
-    } 
-
-    rc = sqlite3_step(pstmt);
-
-    for (int i=0; i<pkfk_length; i++) {
-        pkfk[i].value = strdup(sqlite3_column_text(pstmt, i));
+    int record_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *rowid = sqlite3_column_text(stmt, 0);
+        records[record_count++] = strdup(rowid); 
     }
 
-    sqlite3_finalize(pstmt);
+    *n_records = record_count;
+
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
 }
 
 /**
@@ -582,7 +347,8 @@ void fill_fk_values(const char *table, const char *record, struct pkfk_relation 
  * @return The row ID of the matching record on success, -1 on failure
  * 
  */
-int get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_length) {
+status_t get_rowid_from_pks(const char *table, Fk* fks[], char* fks_values[], int num_fks, int* rowid) {
+    // FIX: this function should be implemented better using the query manager prepared statements
     printf("get_rowid_from_pks\n");
     sqlite3_stmt *pstmt;
     
@@ -590,10 +356,10 @@ int get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_l
     char query_str[1024];
     str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "SELECT rowid FROM %s WHERE ", table);
     
-    for (int i = 0; i < pkfk_length; i++) {
+    for (int i = 0; i < num_fks; i++) {
         if (i > 0)
             str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, " AND ");
-        str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s = '%s'", pkfk[i].pk_name, pkfk[i].value);
+        str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s = '%s'", fks[i]->to, fks_values[i]);
     }
 
     printf("\tquery: %s\n", query_str);
@@ -601,12 +367,14 @@ int get_rowid_from_pks(const char *table, struct pkfk_relation *pkfk, int pkfk_l
     int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
     if (rc != SQLITE_OK) {
         sqlite3_finalize(pstmt);
-        return -1;
+        printf("\t%s\n", sqlite3_errmsg(db));
+        return STATUS_DB_ERROR;
     }
 
     rc = sqlite3_step(pstmt);
 
-    int row_id = sqlite3_column_int(pstmt, 0);
+    *rowid = sqlite3_column_int(pstmt, 0);
+    
     sqlite3_finalize(pstmt);
-    return row_id;
+    return STATUS_OK;
 }

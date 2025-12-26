@@ -3,7 +3,7 @@
 /**
  * @file   syscall_handler.h
  * @author Domenico Livera (domenico.livera@gmail.com)
- * @author Nicola Travaglini (...)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Declaration of syscall handlers for the VFS2DB filesystem.
  * @date   Created on 2025-12-23
  * 
@@ -26,24 +26,15 @@
 
 #define FUSE_USE_VERSION 30
 
+#include <fuse3/fuse.h>
+
 // Portability constants
 #ifndef FUSE_FILL_DIR_DEFAULTS
 #define FUSE_FILL_DIR_DEFAULTS 0
 #endif
 
-#include <fuse3/fuse.h>
-
+#include "../utils/const.h"
 #include "../db_handler/db_handler.h"
-
-#define COUNT_CHAR(str, ch)                                                    \
-  ({                                                                           \
-    int count = 0;                                                             \
-    for (int i = 0; str[i] != '\0'; i++) {                                     \
-      if (str[i] == ch)                                                        \
-        count++;                                                               \
-    }                                                                          \
-    count;                                                                     \
-  })
 
 void *vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg);
 void  vfs2db_destroy(void *private_data);

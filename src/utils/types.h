@@ -3,7 +3,7 @@
 /**
  * @file   types.h
  * @author Domenico Livera (domenico.livera@gmail.com)
- * @author Nicola Travaglini (...)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Type definitions for database schema and related structures.
  * @date   Created on 2025-12-23
  * 
@@ -111,14 +111,6 @@ struct tokens {
     char *table;
     char *record;
     char *attribute;
-};
-
-
-// FIX: destroy this
-struct pkfk_relation {
-    char *fk_name;
-    char *pk_name;
-    char *value;
 };
 
 #endif // TYPES_H

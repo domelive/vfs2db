@@ -24,6 +24,7 @@
 #include "syscall_handler/syscall_handler.h"
 
 sqlite3* db = NULL;
+DbSchema* db_schema = NULL;
 
 /**
  * @brief FUSE operations structure mapping filesystem calls to handler functions.
