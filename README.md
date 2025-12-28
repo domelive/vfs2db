@@ -12,9 +12,13 @@ FUSE driver to navigate an SQL database just like a filesystem.
     - [x] errors
     - [x] query manager
     - [x] CMake building
-    - [ ] db_schema/schema hashmap
     - [ ] (logging & debugging)
     - [ ] ns-programming
+- [ ] optimizations
+    - [ ] buffer manager to save query result for multiple reads and writes of the same file
+    - [x] schema hashmap
+    - [ ] fk hashmap
+    - [ ] pk & attr sets
 - [ ] insert/create/alter table;
 - [ ] delete (unlink, rmdir o remove);
 - [ ] rowid;

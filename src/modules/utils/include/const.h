@@ -50,6 +50,6 @@
 // Constant Definitions
 // =============================================================
 
-#define MAX_SIZE 1024 /**< Maximum size for arrays and buffers */
+#define MAX_SIZE 16384 /**< Maximum size for arrays and buffers */
 
 #endif // CONST_H

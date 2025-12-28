@@ -38,6 +38,7 @@
 #include "query_manager.h"
 #include "types.h"
 #include "errors.h"
+#include "helpers.h"
 
 extern sqlite3* db;
 extern DbSchema* db_schema;

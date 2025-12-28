@@ -46,17 +46,15 @@
  */
 status_t init_db_schema(DbSchema *db_schema) {
     printf("init_db_schema\n");
-    sqlite3_stmt *pstmt = qm_get_static_query_statement(QUERY_SELECT_TABLES_NAME);
+    db_schema->tables_head = NULL;
 
-    int i = 0;
+    sqlite3_stmt *pstmt = qm_get_static_query_statement(QUERY_SELECT_TABLES_NAME);
     while (sqlite3_step(pstmt) == SQLITE_ROW) {
         const char *name = (const char*)sqlite3_column_text(pstmt, 0);
-        db_schema->tables[i] = malloc(sizeof(Schema));
-        db_schema->tables[i]->name = strdup(name);
-        i++;
+        Schema* new_schema = malloc(sizeof(Schema));
+        new_schema->name = strdup(name);
+        add_schema(db_schema, new_schema);
     }
-
-    db_schema->n_tables = i;
 
     return STATUS_OK;
 }
@@ -271,30 +269,33 @@ status_t get_attribute_type(struct tokens *toks, int* type) {
  * @param[in] size   Size of the new value
  * @param[in] append If non-zero, appends the new value to the existing value; otherwise, overwrites it
  * 
- * @return 0 on success, -1 on failure
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  * 
  */
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
     printf("update_attribute_value\n");
     
     sqlite3_stmt *stmt = (append == 0)
-        ? qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->attribute, toks->table)
-        : qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE_APPEND, toks->attribute, toks->table);
+        ? qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table, toks->attribute)
+        : qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE_APPEND, toks->table, toks->attribute);
 
-    if (sqlite3_bind_text(stmt, 1, buffer, (int)size, SQLITE_TRANSIENT) != SQLITE_OK) { 
+    if (sqlite3_bind_text(stmt, 1, buffer, (int)size, SQLITE_TRANSIENT) != SQLITE_OK) {
         sqlite3_finalize(stmt);
+        printf("\tprimo if\n");
         printf("\t%s\n", sqlite3_errmsg(db));
         return STATUS_DB_ERROR; 
     }
 
     if (sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
         sqlite3_finalize(stmt);
+        printf("\tsecondo if\n");
         printf("\t%s\n", sqlite3_errmsg(db));
         return STATUS_DB_ERROR;
     }
 
-    if (sqlite3_step(stmt) != SQLITE_ROW) {
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
         sqlite3_finalize(stmt);
+        printf("\tterzo if\n");
         printf("\t%s\n", sqlite3_errmsg(db));
         return STATUS_DB_ERROR;
     }
@@ -371,7 +372,11 @@ status_t get_rowid_from_pks(const char *table, Fk* fks[], char* fks_values[], in
         return STATUS_DB_ERROR;
     }
 
-    rc = sqlite3_step(pstmt);
+    if(sqlite3_step(pstmt) != SQLITE_ROW) {
+        printf("\t%s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(pstmt);
+        return STATUS_DB_ERROR;
+    }
 
     *rowid = sqlite3_column_int(pstmt, 0);
     

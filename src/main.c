@@ -3,7 +3,7 @@
 /**
  * @file   main.c
  * @author Domenico Livera (domenico.livera@gmail.com)
- * @author Nicola Travaglini (...)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Main entry point for the VFS2DB filesystem.
  * @date   Created on 2025-12-23
  * 

@@ -35,6 +35,7 @@
 
 #include "const.h"
 #include "db_handler.h"
+#include "helpers.h"
 
 void *vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg);
 void  vfs2db_destroy(void *private_data);

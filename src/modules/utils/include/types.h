@@ -24,6 +24,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#include "uthash.h"
 #include "const.h"
 
 // =============================================================
@@ -55,7 +56,7 @@ typedef struct Fk {
  * 
  * Includes the following fields:
  * 
- * - `name`:    Name of the table.
+ * - `name`:    The name of the table and also the key for the schema.
  * 
  * - `pk`:      Array of strings representing the names of primary key attributes.
  * 
@@ -69,10 +70,13 @@ typedef struct Fk {
  * 
  * - `n_fks`:   Number of foreign key relationships.
  * 
+ * - `hh`:      UTHash handle for hash table operations.
+ * 
  * @note All string fields are dynamically allocated and should be freed appropriately to avoid memory leaks.
  */
 typedef struct Schema {
     char *name;
+    
     char *pk[MAX_SIZE];
     char *attr[MAX_SIZE];
     
@@ -81,6 +85,8 @@ typedef struct Schema {
     int   n_pk;
     int   n_attr;
     int   n_fks;
+    
+    UT_hash_handle hh;
 } Schema; 
 
 // =============================================================
@@ -92,14 +98,11 @@ typedef struct Schema {
  * 
  * Includes the following fields:
  * 
- * - `tables`:   Array of pointers to `Schema` structures representing the tables in the database.
- * 
- * - `n_tables`: Number of tables in the database.
+ * - `tables_head`:   Pointer to the head of a hashmap of `Schema` structures representing all tables in the database.
  *
  */
 typedef struct DbSchema {
-    Schema *tables[MAX_SIZE];
-    int     n_tables;
+    Schema* tables_head;
 } DbSchema;
 
 // =============================================================

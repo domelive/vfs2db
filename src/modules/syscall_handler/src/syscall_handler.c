@@ -24,7 +24,7 @@
 #include "syscall_handler.h"
 
 extern sqlite3*  db; /**< Database connection handle */
-extern DbSchema* db_schema;
+extern DbSchema* db_schema; 
 
 /**
  * Tokenize Path
@@ -94,14 +94,9 @@ static inline char *remove_extension(const char *path) {
  */
 static inline int check_symlink(struct tokens* toks) {
     printf("check_symlink\n");
-    // Get schema
-    Schema* table;
-    for (int i=0; i<db_schema->n_tables; i++) {
-        if (strncmp(toks->table, db_schema->tables[i]->name, strlen(toks->table)) == 0) {
-            table = db_schema->tables[i];
-            break;
-        }
-    }
+
+    Schema* table = find_schema_by_name(db_schema, toks->table);
+
     // Check if attribute is fk
     for (int i=0; i<table->n_fks; i++) {
         if (strncmp(toks->attribute, table->fks[i]->from, strlen(toks->attribute)) == 0) {
@@ -109,6 +104,26 @@ static inline int check_symlink(struct tokens* toks) {
         }
     }
     return 0;
+}
+
+/**
+ * Get Attribute Foreign Key
+ * 
+ * @brief Retrieves the foreign key structure for a specified attribute in a table schema.
+ * 
+ * @param[in] table          Pointer to the Schema structure of the table
+ * @param[in] attribute_name The name of the attribute whose foreign key is to be retrieved
+ * 
+ * @return Pointer to the Fk structure of the specified attribute, or NULL if not found
+ * 
+ */
+static inline Fk* get_attribute_fk(Schema* table, const char* attribute_name) {
+    for (int i=0; i<table->n_fks; i++) {
+        if (strncmp(attribute_name, table->fks[i]->from, strlen(attribute_name)) == 0) {
+            return table->fks[i];
+        }
+    }
+    return NULL;
 }
 
 /**
@@ -130,30 +145,31 @@ void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     if (!db_schema) return NULL;
     
     init_db_schema(db_schema);
-    printf("\tNumber of tables: %d\n", db_schema->n_tables);
+    printf("\tNumber of tables: %d\n", count_schemas(db_schema));
 
     // For each table, get all the info
-    for (int i=0; i<db_schema->n_tables; i++) {
-        init_schema(db_schema->tables[i]);
+    Schema *current_item, *tmp;
+    HASH_ITER(hh, db_schema->tables_head, current_item, tmp) {
+        init_schema(current_item);
     }
 
     // Testing
-    for (int i=0; i<db_schema->n_tables; i++) {
-        // Print table name
-        printf("Table: %s\n", db_schema->tables[i]->name);
+    HASH_ITER(hh, db_schema->tables_head, current_item, tmp) {
+        printf("Table: %s\n", current_item->name);
+
         // Print pks
-        for (int j=0; j<db_schema->tables[i]->n_pk; j++) {
-            printf("\tPK: %s\n", db_schema->tables[i]->pk[j]);
+        for (int j=0; j<current_item->n_pk; j++) {
+            printf("\tPK: %s\n", current_item->pk[j]);
         }
         // Print fks
-        for (int j=0; j<db_schema->tables[i]->n_fks; j++) {
-            printf("\tFK: %s -> %s(%s)\n", db_schema->tables[i]->fks[j]->from,
-                                           db_schema->tables[i]->fks[j]->table,
-                                           db_schema->tables[i]->fks[j]->to);
+        for (int j=0; j<current_item->n_fks; j++) {
+            printf("\tFK: %s -> %s(%s)\n", current_item->fks[j]->from,
+                                           current_item->fks[j]->table,
+                                           current_item->fks[j]->to);
         }
         // Print attributes
-        for (int j=0; j<db_schema->tables[i]->n_attr; j++) {
-            printf("\tATT: %s\n", db_schema->tables[i]->attr[j]);
+        for (int j=0; j<current_item->n_attr; j++) {
+            printf("\tATT: %s\n", current_item->attr[j]);
         }
     }
 
@@ -233,7 +249,7 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         }
 
         size_t attr_size;
-        if (get_attribute_size(toks, &attr_size) == -1) {
+        if (get_attribute_size(toks, &attr_size) == STATUS_DB_ERROR) {
             return -1;
         }
 
@@ -341,9 +357,10 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     int slash_count = COUNT_CHAR(path_copy, '/');
     switch(slash_count) {
         case 0: {
-            for (int i=0; i<db_schema->n_tables; i++) {
-                printf("\tfile: %s\n", db_schema->tables[i]->name);
-                filler(buffer, db_schema->tables[i]->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+            Schema *current_item, *tmp;
+            HASH_ITER(hh, db_schema->tables_head, current_item, tmp) {
+                printf("\tschema: %s\n", current_item->name);
+                filler(buffer, current_item->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
             }
             break;
         }
@@ -366,13 +383,7 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
         }
 
         case 2: {
-            Schema* table;
-            for (int i=0; i<db_schema->n_tables; i++) {
-                if (strncmp(toks->table, db_schema->tables[i]->name, strlen(toks->table)) == 0) {
-                    table = db_schema->tables[i];
-                    break;
-                }
-            }
+            Schema* table = find_schema_by_name(db_schema, toks->table);
 
             char file[MAX_SIZE];
 
@@ -495,7 +506,7 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
  */
 int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     printf("write: %s\n", path);
-    printf("\tbuffer: %s\n", buffer);
+    // printf("\tbuffer: %s\n", buffer);
     printf("\tsize: %zu\n", size);
     printf("\toffset: %d\n", offset);
 
@@ -505,7 +516,14 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     struct tokens *toks = tokenize_path(noext_path);
     
     int append = (offset == 0) ? 0 : 1;
-    int result = update_attribute_value(toks, buffer, size, append);
+    if (update_attribute_value(toks, buffer, size, append) == STATUS_DB_ERROR) {
+        free(toks->table);
+        free(toks->record);
+        free(toks->attribute);
+        free(toks);
+        free(noext_path);
+        return -1;
+    }
 
     free(toks->table);
     free(toks->record);
@@ -514,7 +532,7 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     free(noext_path);
 
     // What? FIX
-    return result == 0 ? size : result;
+    return size;
 }
 
 /**
@@ -555,22 +573,10 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     struct tokens *toks = tokenize_path(noext_path);
 
     // Get schema
-    Schema* table;
-    for (int i=0; i<db_schema->n_tables; i++) {
-        if (strncmp(toks->table, db_schema->tables[i]->name, strlen(toks->table)) == 0) {
-            table = db_schema->tables[i];
-            break;
-        }
-    }
+    Schema* table = find_schema_by_name(db_schema, toks->table);
 
     // Get fk
-    Fk* fk;
-    for (int i=0; i<table->n_fks; i++) {
-        if (strncmp(toks->attribute, table->fks[i]->from, strlen(toks->attribute)) == 0) {
-            fk = table->fks[i];
-            break;
-        }
-    }
+    Fk* fk = get_attribute_fk(table, toks->attribute);
 
     // Get all fks with the same 'table' value
     Fk* fks[table->n_fks];
