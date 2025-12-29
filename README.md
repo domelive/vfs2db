@@ -15,10 +15,10 @@ FUSE driver to navigate an SQL database just like a filesystem.
     - [ ] (logging & debugging)
     - [ ] ns-programming
 - [ ] optimizations
-    - [ ] buffer manager to save query result for multiple reads and writes of the same file
+    - [ ] cache to save query result for multiple reads and writes of the same file
     - [x] schema hashmap
-    - [ ] fk hashmap
-    - [ ] pk & attr sets
+    - [x] fk hashmap
+    - [x] pk & attr sets
 - [ ] insert/create/alter table;
 - [ ] delete (unlink, rmdir o remove);
 - [ ] rowid;

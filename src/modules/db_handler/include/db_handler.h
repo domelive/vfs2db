@@ -36,6 +36,7 @@
 #include <stdbool.h>
 
 #include "query_manager.h"
+#include "cache_manager.h"
 #include "types.h"
 #include "errors.h"
 #include "helpers.h"
@@ -45,7 +46,7 @@ extern DbSchema* db_schema;
 
 status_t init_db_schema(DbSchema* db_schema);
 status_t init_schema(Schema* schema);
-status_t get_attribute_bytes(struct tokens* toks, char** bytes);
+status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes);
 status_t get_attribute_size(struct tokens* toks, size_t* size);
 status_t get_attribute_type(struct tokens* toks, int* type);
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append);

@@ -86,6 +86,17 @@ static query_t query_store[] = {
         1,
         NULL
     },
+
+    [QUERY_TPL_SELECT_CHUNK_ATTRIBUTE] = {
+        "SELECT " 
+            "substr(%s, %ld + 1, %ld) "
+        "FROM "
+            "%s "
+        "WHERE "
+            "rowid = ?",
+        1,
+        NULL
+    },
     
     [QUERY_TPL_UPDATE_ATTRIBUTE] = {
         "UPDATE "

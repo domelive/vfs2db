@@ -33,6 +33,8 @@
 typedef enum status_t {
     STATUS_OK,
     STATUS_DB_ERROR,
+    
+    STATUS_CACHE_FULL,
 } status_t;
 
 #endif // ERRORS_H

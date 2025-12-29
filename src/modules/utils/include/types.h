@@ -31,6 +31,16 @@
 // Metadata Structures
 // =============================================================
 
+typedef struct Pk {
+    char* name;
+    UT_hash_handle hh;
+} Pk;
+
+typedef struct Attr {
+    char* name;
+    UT_hash_handle hh;
+} Attr;
+
 /**
  * @brief Structure representing a Foreign Key relationship in a database schema.
  * 
@@ -42,13 +52,17 @@
  * 
  * - `to`:        The attribute in the referenced table that the foreign key points to.
  * 
+ * - `hh`:        UTHash handle for hash table operations.
+ * 
  * @note All string fields are dynamically allocated and should be freed appropriately to avoid memory leaks.
  * 
  */
 typedef struct Fk {
-    char *from;  
-    char *table;
-    char *to;
+    char* from;  
+    char* table;
+    char* to;
+
+    UT_hash_handle hh;
 } Fk;
 
 /**
@@ -58,11 +72,11 @@ typedef struct Fk {
  * 
  * - `name`:    The name of the table and also the key for the schema.
  * 
- * - `pk`:      Array of strings representing the names of primary key attributes.
+ * - `pk`:      Set of strings representing the names of primary key attributes.
  * 
- * - `attr`:    Array of strings representing the names of other attributes.
+ * - `attr`:    Set of strings representing the names of other attributes.
  * 
- * - `fks`:     Array of pointers to `Fk` structures representing foreign key relationships.
+ * - `fks`:     Hashmap of pointers to `Fk` structures representing foreign key relationships.
  * 
  * - `n_pk`:    Number of primary key attributes.
  * 
@@ -75,16 +89,11 @@ typedef struct Fk {
  * @note All string fields are dynamically allocated and should be freed appropriately to avoid memory leaks.
  */
 typedef struct Schema {
-    char *name;
+    char* name;
     
-    char *pk[MAX_SIZE];
-    char *attr[MAX_SIZE];
-    
-    Fk   *fks[MAX_SIZE];
-    
-    int   n_pk;
-    int   n_attr;
-    int   n_fks;
+    Pk*   pk_head;
+    Attr* attr_head;
+    Fk*   fks_head;
     
     UT_hash_handle hh;
 } Schema; 
@@ -111,9 +120,9 @@ typedef struct DbSchema {
 
 // FIX: make it a type, like Tokens
 struct tokens {
-    char *table;
-    char *record;
-    char *attribute;
+    char* table;
+    char* record;
+    char* attribute;
 };
 
 #endif // TYPES_H

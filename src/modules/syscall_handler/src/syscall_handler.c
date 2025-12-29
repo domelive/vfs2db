@@ -23,8 +23,8 @@
 
 #include "syscall_handler.h"
 
-extern sqlite3*  db; /**< Database connection handle */
-extern DbSchema* db_schema; 
+extern sqlite3*  db;        /**< Database connection handle */
+extern DbSchema* db_schema; /**< Database schema structure */ 
 
 /**
  * Tokenize Path
@@ -98,32 +98,10 @@ static inline int check_symlink(struct tokens* toks) {
     Schema* table = find_schema_by_name(db_schema, toks->table);
 
     // Check if attribute is fk
-    for (int i=0; i<table->n_fks; i++) {
-        if (strncmp(toks->attribute, table->fks[i]->from, strlen(toks->attribute)) == 0) {
-            return 1;
-        }
+    if (find_fk_by_name(table, toks->attribute)) {
+        return 1;
     }
     return 0;
-}
-
-/**
- * Get Attribute Foreign Key
- * 
- * @brief Retrieves the foreign key structure for a specified attribute in a table schema.
- * 
- * @param[in] table          Pointer to the Schema structure of the table
- * @param[in] attribute_name The name of the attribute whose foreign key is to be retrieved
- * 
- * @return Pointer to the Fk structure of the specified attribute, or NULL if not found
- * 
- */
-static inline Fk* get_attribute_fk(Schema* table, const char* attribute_name) {
-    for (int i=0; i<table->n_fks; i++) {
-        if (strncmp(attribute_name, table->fks[i]->from, strlen(attribute_name)) == 0) {
-            return table->fks[i];
-        }
-    }
-    return NULL;
 }
 
 /**
@@ -148,28 +126,28 @@ void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     printf("\tNumber of tables: %d\n", count_schemas(db_schema));
 
     // For each table, get all the info
-    Schema *current_item, *tmp;
-    HASH_ITER(hh, db_schema->tables_head, current_item, tmp) {
-        init_schema(current_item);
+    HASH_FOREACH(current_schema, db_schema->tables_head) {
+        printf("Initializing schema for table: %s\n", current_schema->name);
+        init_schema(current_schema);
     }
 
     // Testing
-    HASH_ITER(hh, db_schema->tables_head, current_item, tmp) {
-        printf("Table: %s\n", current_item->name);
+    HASH_FOREACH(current_schema, db_schema->tables_head) {
+        printf("Table: %s\n", current_schema->name);
 
         // Print pks
-        for (int j=0; j<current_item->n_pk; j++) {
-            printf("\tPK: %s\n", current_item->pk[j]);
+        HASH_FOREACH(current_pk, current_schema->pk_head) {
+            printf("\tPK: %s\n", current_pk->name);
         }
+        
         // Print fks
-        for (int j=0; j<current_item->n_fks; j++) {
-            printf("\tFK: %s -> %s(%s)\n", current_item->fks[j]->from,
-                                           current_item->fks[j]->table,
-                                           current_item->fks[j]->to);
+        HASH_FOREACH(current_fk, current_schema->fks_head) {
+            printf("\tFK: %s -> %s(%s)\n", current_fk->from, current_fk->table, current_fk->to);
         }
+        
         // Print attributes
-        for (int j=0; j<current_item->n_attr; j++) {
-            printf("\tATT: %s\n", current_item->attr[j]);
+        HASH_FOREACH(current_attr, current_schema->attr_head) {
+            printf("\tATT: %s\n", current_attr->name);
         }
     }
 
@@ -192,11 +170,19 @@ void vfs2db_destroy(void *private_data) {
         printf("sqlite3_close executed correctly.\n");
     }
 
-    fuse_opt_free_args(args);
-    printf("fuse_opt_free_args executed correctly.\n");
+    HASH_FOREACH(current_schema, db_schema->tables_head) {
+        free_attr_set(current_schema);
+        free_pk_set(current_schema);
+        free_fk_hashmap(current_schema);
+        free(current_schema->name);
+    }
 
+    free_schema_hashmap(db_schema);
     free(db_schema);
     printf("db schema deallocated.\n");
+    
+    fuse_opt_free_args(args);
+    printf("fuse_opt_free_args executed correctly.\n");
 }
 
 /**
@@ -357,10 +343,9 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     int slash_count = COUNT_CHAR(path_copy, '/');
     switch(slash_count) {
         case 0: {
-            Schema *current_item, *tmp;
-            HASH_ITER(hh, db_schema->tables_head, current_item, tmp) {
-                printf("\tschema: %s\n", current_item->name);
-                filler(buffer, current_item->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+            HASH_FOREACH(current_schema, db_schema->tables_head) {
+                printf("\tschema: %s\n", current_schema->name);
+                filler(buffer, current_schema->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
             }
             break;
         }
@@ -388,20 +373,20 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
             char file[MAX_SIZE];
 
             // Pk
-            for (int i=0; i<table->n_pk; i++) {
-                snprintf(file, sizeof(file), "%s.vfs2db", table->pk[i]);
+            HASH_FOREACH(current_pk, table->pk_head) {
+                snprintf(file, sizeof(file), "%s.vfs2db", current_pk->name);
                 filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
             }
 
             // Attr
-            for (int i=0; i<table->n_attr; i++) {
-                snprintf(file, sizeof(file), "%s.vfs2db", table->attr[i]);
+            HASH_FOREACH(current_attr, table->attr_head) {
+                snprintf(file, sizeof(file), "%s.vfs2db", current_attr->name);
                 filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
             }
 
             // Fk
-            for (int i=0; i<table->n_fks; i++) {
-                snprintf(file, sizeof(file), "%s.vfs2db", table->fks[i]->from);
+            HASH_FOREACH(current_fk, table->fks_head) {
+                snprintf(file, sizeof(file), "%s.vfs2db", current_fk->from);
                 filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
             }
 
@@ -454,13 +439,15 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 
     content.bytes = NULL;
 
-    if (get_attribute_size(toks, &content.size) == -1) {
+    if (get_attribute_size(toks, &content.size) == STATUS_DB_ERROR) {
         free(toks->table); free(toks->record); free(toks->attribute);
         free(toks); free(noext_path);
         return -1;
     }
 
-    if (get_attribute_bytes(toks, &content.bytes) == -1) {
+    // Let's use the cache
+    off_t cache_offset = offset / CHUNK_SIZE;
+    if (get_attribute_bytes(toks, cache_offset, &content.bytes) == STATUS_DB_ERROR) {
         free(toks->table); free(toks->record); free(toks->attribute);
         free(toks); free(noext_path); free(content.bytes);
         return -1;
@@ -531,7 +518,6 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     free(toks);
     free(noext_path);
 
-    // What? FIX
     return size;
 }
 
@@ -576,14 +562,14 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     Schema* table = find_schema_by_name(db_schema, toks->table);
 
     // Get fk
-    Fk* fk = get_attribute_fk(table, toks->attribute);
+    Fk* fk = find_fk_by_name(table, toks->attribute);
 
     // Get all fks with the same 'table' value
-    Fk* fks[table->n_fks];
+    Fk* fks[count_fks(table)];
     int n_same_fks = 0;
-    for (int i=0; i<table->n_fks; i++) {
-        if (strncmp(fk->table, table->fks[i]->table, strlen(fk->table)) == 0) {
-            fks[n_same_fks++] = table->fks[i];
+    HASH_FOREACH(current_fk, table->fks_head) {
+        if (strncmp(fk->table, current_fk->table, strlen(fk->table)) == 0) {
+            fks[n_same_fks++] = current_fk;
         }
     }
 
@@ -596,7 +582,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
             .record = toks->record,
             .attribute = fks[i]->from
         };
-        if (get_attribute_bytes(&fk_toks, &value) == STATUS_DB_ERROR) {
+        if (get_attribute_bytes(&fk_toks, 0, &value) == STATUS_DB_ERROR) {
             return STATUS_DB_ERROR;
         }
         fk_values[i] = value;

@@ -50,6 +50,8 @@
 // Constant Definitions
 // =============================================================
 
-#define MAX_SIZE 16384 /**< Maximum size for arrays and buffers */
+#define MAX_SIZE            16384        /**< Maximum size for arrays and buffers */
+#define CHUNK_SIZE          (128 * 1024) /**< Size of chunks for reading/writing operations */
+#define CACHE_BLOCKS        1000         /**< Number of blocks in the cache */
 
 #endif // CONST_H

@@ -51,7 +51,7 @@ status_t init_db_schema(DbSchema *db_schema) {
     sqlite3_stmt *pstmt = qm_get_static_query_statement(QUERY_SELECT_TABLES_NAME);
     while (sqlite3_step(pstmt) == SQLITE_ROW) {
         const char *name = (const char*)sqlite3_column_text(pstmt, 0);
-        Schema* new_schema = malloc(sizeof(Schema));
+        Schema* new_schema = calloc(1, sizeof(Schema));
         new_schema->name = strdup(name);
         add_schema(db_schema, new_schema);
     }
@@ -82,11 +82,6 @@ status_t init_db_schema(DbSchema *db_schema) {
  */
 status_t init_schema(Schema *schema) {
     printf("init_schema\n");
-    sqlite3_stmt *pstmt;
-
-    schema->n_pk = 0;
-    schema->n_attr = 0;
-    schema->n_fks = 0;
 
     // This query gets: column_name, is_pk, fk_table, fk_column_name
     sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_INFO, schema->name, schema->name);
@@ -99,26 +94,25 @@ status_t init_schema(Schema *schema) {
         // Check if primary key
         if (is_pk) {
             // Add to schema pk field
-            schema->pk[schema->n_pk] = strdup(column_name);
-            schema->n_pk++;
+            Pk* pk = malloc(sizeof(Pk));
+            pk->name = strdup(column_name);
+            add_pk_to_schema(schema, pk);
         }
         // Check if foreign key
         else if (fk_table != NULL) {
-            // Populate the schema fks field with the foreign key structure
+            // Add fk to schema
             Fk *fk = malloc(sizeof(Fk));
             fk->from = strdup(column_name);
             fk->table = strdup(fk_table);
             fk->to = strdup(fk_column_name);
-
-            // Add fk to schema
-            schema->fks[schema->n_fks] = fk;
-            schema->n_fks++;
+            add_fk_to_schema(schema, fk);
         }
         // Normal attribute
         else {
             // Add to schema attr field
-            schema->attr[schema->n_attr] = strdup(column_name);
-            schema->n_attr++;
+            Attr* attr = malloc(sizeof(Attr));
+            attr->name = strdup(column_name);
+            add_attribute_to_schema(schema, attr);
         }
     }
     
@@ -143,7 +137,6 @@ status_t init_schema(Schema *schema) {
  */
 status_t get_attribute_size(struct tokens* toks, size_t *size) {
     printf("get_attribute_size\n");
-    sqlite3_stmt *pstmt;
 
     printf("\ttoks:\n");
     printf("\t\tattribute: %s\n", toks->attribute);
@@ -192,27 +185,70 @@ status_t get_attribute_size(struct tokens* toks, size_t *size) {
  * @param[out] bytes Pointer to a char pointer where the attribute value will be stored
  * @param[out] size  Pointer to a size_t variable where the size of the attribute value will be stored
  * 
- * @return 0 on success, -1 on failure
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  * 
  */
-status_t get_attribute_bytes(struct tokens* toks, char **bytes) {
-    printf("get_attribute_value\n");
+status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
+    printf("get_attribute_bytes\n");
+    printf("offset: %ld\n", offset);
     
-    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE, toks->attribute, offset, CHUNK_SIZE, toks->table);
 
     if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) { 
+        printf("\tPrimo if\n");
         printf("\t%s\n", sqlite3_errmsg(db));        
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR; 
     }
 
+    char* sql = sqlite3_expanded_sql(stmt);
+    printf("\tSQL: %s\n", sql);
+
+    CacheKey* key = malloc(sizeof(CacheKey));
+    if (!key) {
+        printf("\tSecondo if\n");
+        printf("\t%s\n", sqlite3_errmsg(db));        
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+    
+    memset(key, 0, sizeof(CacheKey));
+    strncpy(key->query, sql, strlen(sql) + 1);
+    key->offset = offset;
+    
+    CacheBlock* blk;
+    // CACHE HIT
+    if ((blk = cache_get(key)) != NULL) {
+        printf("Cache hit\n");
+        cache_view();
+        *bytes = strdup(blk->data);
+        sqlite3_finalize(stmt);
+        return STATUS_OK;   
+    }
+
+    // CACHE MISS
     if (sqlite3_step(stmt) != SQLITE_ROW) {
+        printf("Cache miss step error\n");
         printf("\t%s\n", sqlite3_errmsg(db));        
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
 
-    *bytes = strdup(sqlite3_column_text(stmt, 0));
+    blk = malloc(sizeof(CacheBlock));
+    if (!blk) {
+        printf("\t%s\n", sqlite3_errmsg(db));        
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+    blk->key = *key;
+    blk->data = strdup((char*)sqlite3_column_text(stmt, 0));
+    blk->actual_size = (size_t)sqlite3_column_bytes(stmt, 0);
+    blk->is_dirty = 0;
+    cache_add_block(blk);
+
+    *bytes = strdup(blk->data);
+
+    cache_view();
 
     sqlite3_finalize(stmt);
     return STATUS_OK;

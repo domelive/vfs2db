@@ -23,8 +23,8 @@
 
 #include "syscall_handler.h"
 
-sqlite3* db = NULL;
-DbSchema* db_schema = NULL;
+sqlite3* db = NULL;         /**< Database connection handle */
+DbSchema* db_schema = NULL; /**< Database schema structure */
 
 /**
  * @brief FUSE operations structure mapping filesystem calls to handler functions.
@@ -69,6 +69,7 @@ static const struct fuse_opt option_spec[] = {
 };
 
 int main(int argc, char *argv[]) {
+    printf("Starting VFS2DB...\n");
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct options opt = { NULL };
 
@@ -90,6 +91,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    printf("3, 2, 1...\n");
     int res = fuse_main(args.argc, args.argv, &vfs2db_oper, NULL);
 
     free(opt.db_path);
