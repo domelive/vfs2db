@@ -423,6 +423,8 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
  */
 int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     printf("read: %s\n", path);
+    printf("size: %ld\n", size);
+    printf("offset: %ld\n", offset);
 
     size_t path_len = strlen(path);
     if (path_len < 7) return -1; // Safety check
@@ -432,39 +434,36 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 
     struct tokens *toks = tokenize_path(noext_path);
 
-    struct {
-        char *bytes;
-        size_t size;
-    } content;
+    size_t total_size;
+    char *bytes = NULL;
 
-    content.bytes = NULL;
-
-    if (get_attribute_size(toks, &content.size) == STATUS_DB_ERROR) {
+    if (get_attribute_size(toks, &total_size) == STATUS_DB_ERROR) {
         free(toks->table); free(toks->record); free(toks->attribute);
         free(toks); free(noext_path);
         return -1;
     }
 
     // Let's use the cache
-    off_t cache_offset = offset / CHUNK_SIZE;
-    if (get_attribute_bytes(toks, cache_offset, &content.bytes) == STATUS_DB_ERROR) {
+    if (get_attribute_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
         free(toks->table); free(toks->record); free(toks->attribute);
-        free(toks); free(noext_path); free(content.bytes);
+        free(toks); free(noext_path);
         return -1;
     }
 
-    if (offset >= content.size) {
+    // Se l'offset supera la dimensione totale, controllo paranoico
+    if (offset >= total_size) {
         free(toks->table); free(toks->record); free(toks->attribute);
-        free(toks); free(noext_path); free(content.bytes);
+        free(toks); free(noext_path);
         return 0;
     }
 
-    size_t bytes_available = content.size - offset;
-    if (bytes_available > size) {
-        bytes_available = size;
-    }
+    size_t bytes_to_copy = MIN(size, total_size - offset);
 
-    memcpy(buffer, content.bytes + offset, bytes_available);
+    printf("bytes_to_copy: %ld\n", bytes_to_copy);
+
+    printf("Sto per copiare nel buffer\n");
+    memcpy(buffer, bytes, bytes_to_copy);
+    printf("Ho copiato nel buffer\n");
 
     // Cleanup
     free(toks->table);
@@ -472,9 +471,8 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     free(toks->attribute);
     free(toks);
     free(noext_path);
-    free(content.bytes);
 
-    return bytes_available;
+    return bytes_to_copy;
 }
 
 /**

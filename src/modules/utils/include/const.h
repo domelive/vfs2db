@@ -30,6 +30,8 @@
 // Utility Macros
 // =============================================================
 
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))   /**< Macro to get the minimum of two values */
+
 /**
  * @brief Macro to count occurrences of a character in a string.
  * 
@@ -50,8 +52,11 @@
 // Constant Definitions
 // =============================================================
 
-#define MAX_SIZE            16384        /**< Maximum size for arrays and buffers */
-#define CHUNK_SIZE          (128 * 1024) /**< Size of chunks for reading/writing operations */
-#define CACHE_BLOCKS        1000         /**< Number of blocks in the cache */
+#define MB(n)               (n * (1024 * 1024))         /**< Megabyte in bytes */
+#define MAX_SIZE            16384                       /**< Maximum size for arrays and buffers */
+
+#define CACHE_SIZE          MB(128)                     /**< Total cache size in bytes */
+#define BLOCK_SIZE          256 * 1024                  /**< Size of chunks for reading/writing operations */
+#define CACHE_BLOCKS        (CACHE_SIZE / BLOCK_SIZE)   /**< Number of blocks in the cache */
 
 #endif // CONST_H

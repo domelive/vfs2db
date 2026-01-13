@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import stat
+import random
 
 def create_test_db():
     try:
@@ -60,7 +61,7 @@ def create_test_db():
             ('Alice', 'Smith', 'alice@example.com'),
             ('Bob', 'Jones', 'bob@example.com'),
             ('Charlie', 'Day', 'charlie@example.com'),
-            ('Charlie', 'Kirk', 'a' * 100000000),
+            ('Charlie', 'Kirk', str("".join([random.choice(['a', 'b', 'c', 'd']) for _ in range(100 * 1024 * 1024)]))),
         ]
         c.executemany("INSERT INTO users (name, surname, email) VALUES (?, ?, ?)", users_data)
         

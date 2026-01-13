@@ -191,42 +191,39 @@ status_t get_attribute_size(struct tokens* toks, size_t *size) {
 status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
     printf("get_attribute_bytes\n");
     printf("offset: %ld\n", offset);
-    
-    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE, toks->attribute, offset, CHUNK_SIZE, toks->table);
 
-    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) { 
-        printf("\tPrimo if\n");
-        printf("\t%s\n", sqlite3_errmsg(db));        
-        sqlite3_finalize(stmt);
-        return STATUS_DB_ERROR; 
-    }
-
-    char* sql = sqlite3_expanded_sql(stmt);
-    printf("\tSQL: %s\n", sql);
+    // Rebuild the path from toks
+    char path[MAX_SIZE];
+    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
 
     CacheKey* key = malloc(sizeof(CacheKey));
     if (!key) {
-        printf("\tSecondo if\n");
-        printf("\t%s\n", sqlite3_errmsg(db));        
-        sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
     
     memset(key, 0, sizeof(CacheKey));
-    strncpy(key->query, sql, strlen(sql) + 1);
+    strncpy(key->query, path, strlen(path) + 1);
     key->offset = offset;
-    
+
     CacheBlock* blk;
     // CACHE HIT
     if ((blk = cache_get(key)) != NULL) {
-        printf("Cache hit\n");
-        cache_view();
-        *bytes = strdup(blk->data);
-        sqlite3_finalize(stmt);
+        printf("CACHE HIT\n");
+        // cache_view();
+        *bytes = blk->data;
         return STATUS_OK;   
     }
 
     // CACHE MISS
+    // Build the statement
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE, toks->attribute, offset, BLOCK_SIZE, toks->table);
+
+    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        printf("\t%s\n", sqlite3_errmsg(db));        
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         printf("Cache miss step error\n");
         printf("\t%s\n", sqlite3_errmsg(db));        
@@ -236,7 +233,7 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
 
     blk = malloc(sizeof(CacheBlock));
     if (!blk) {
-        printf("\t%s\n", sqlite3_errmsg(db));        
+        printf("\t%s\n", sqlite3_errmsg(db));
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
@@ -246,7 +243,7 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
     blk->is_dirty = 0;
     cache_add_block(blk);
 
-    *bytes = strdup(blk->data);
+    *bytes = blk->data;
 
     cache_view();
 

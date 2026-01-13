@@ -48,7 +48,7 @@ static struct {
  * 
  */
 CacheBlock* cache_get(CacheKey* key) {
-    printf("cache get zio pera\n");
+    printf("cache get\n");
     CacheBlock* blk = NULL;
     HASH_FIND(hh, cache.map, key, sizeof(CacheKey), blk);
     if (blk) cache_touch(blk);
@@ -158,9 +158,9 @@ void cache_evict() {
 
 void cache_view() {
     CacheBlock* current = cache.lru_head;
-    printf("Cache Blocks (Most Recent to Least Recent):\n");
+    printf("Cache Blocks (Most Recent to Least Recent): %d\n", cache_count());
     while (current) {
-        printf("Key: [%s, %ld], Data: %s\n", current->key.query, current->key.offset, current->data);
+        printf("Key: [%s, %ld], Data: pisello per sempre\n", current->key.query, current->key.offset);
         current = current->next;
     }
 }
