@@ -15,7 +15,9 @@ FUSE driver to navigate an SQL database just like a filesystem.
     - [ ] (logging & debugging)
     - [ ] ns-programming
 - [ ] optimizations
-    - [ ] cache to save query result for multiple reads and writes of the same file
+    - [x] cache to save query result for multiple reads and writes of the same file
+        - [ ] make it limitless (for the rowid query)
+    - [ ] memory arena
     - [x] schema hashmap
     - [x] fk hashmap
     - [x] pk & attr sets

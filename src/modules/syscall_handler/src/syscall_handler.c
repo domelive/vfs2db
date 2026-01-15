@@ -93,8 +93,6 @@ static inline char *remove_extension(const char *path) {
  * 
  */
 static inline int check_symlink(struct tokens* toks) {
-    printf("check_symlink\n");
-
     Schema* table = find_schema_by_name(db_schema, toks->table);
 
     // Check if attribute is fk
@@ -198,22 +196,17 @@ void vfs2db_destroy(void *private_data) {
  * 
  */
 int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
-    printf("getattr: %s\n", path);
-
     memset(st, 0, sizeof(*st));
 
     // Check if directory --> doesn't finish with .vfs2db
     // path: test/ciao/1.vfs2db
     if (strncmp(&path[strlen(path) - 7], ".vfs2db", 7)) {
-        printf("\tDirectory\n");
         st->st_mode = S_IFDIR | 0755;
         st->st_nlink = 2;
         st->st_uid = getuid();
         st->st_gid = getgid();
         st->st_atime = st->st_mtime = time(NULL);
     } else {
-        printf("\tFile\n");
-
         char *noext_path = remove_extension(path);
         if (!noext_path) return -ENOMEM;
         struct tokens *toks = tokenize_path(noext_path);
@@ -246,8 +239,6 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         free(toks->attribute);
         free(toks);
         free(noext_path);
-
-        printf("\tcontent size: %d\n", attr_size);
     }
 
     return 0;
@@ -361,7 +352,6 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
             for (int i=0; i<n_records; i++) {
                 printf("\tfile: %s\n", record_list[i]);
                 filler(buffer, record_list[i], NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-                free(record_list[i]);
             }
             
             break;
@@ -422,9 +412,11 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
  * 
  */
 int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+    (void)fi;
+
     printf("read: %s\n", path);
-    printf("size: %ld\n", size);
-    printf("offset: %ld\n", offset);
+    printf("\tsize: %ld\n", size);
+    printf("\toffset: %ld\n", offset);
 
     size_t path_len = strlen(path);
     if (path_len < 7) return -1; // Safety check
@@ -450,7 +442,7 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
         return -1;
     }
 
-    // Se l'offset supera la dimensione totale, controllo paranoico
+    // assert (offset <= total_size);
     if (offset >= total_size) {
         free(toks->table); free(toks->record); free(toks->attribute);
         free(toks); free(noext_path);
@@ -459,11 +451,7 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 
     size_t bytes_to_copy = MIN(size, total_size - offset);
 
-    printf("bytes_to_copy: %ld\n", bytes_to_copy);
-
-    printf("Sto per copiare nel buffer\n");
     memcpy(buffer, bytes, bytes_to_copy);
-    printf("Ho copiato nel buffer\n");
 
     // Cleanup
     free(toks->table);
@@ -492,8 +480,6 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     printf("write: %s\n", path);
     // printf("\tbuffer: %s\n", buffer);
-    printf("\tsize: %zu\n", size);
-    printf("\toffset: %d\n", offset);
 
     char *noext_path = remove_extension(path);
     if (!noext_path) return -ENOMEM;
@@ -551,7 +537,6 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi) {
  * 
  */
 int vfs2db_readlink(const char* path, char* buffer, size_t size) {
-    printf("readlink\n");
     char *noext_path = remove_extension(path);
     if (!noext_path) return -ENOMEM;
     struct tokens *toks = tokenize_path(noext_path);

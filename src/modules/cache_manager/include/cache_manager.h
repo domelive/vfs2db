@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 #include <sys/types.h>
+#include <pthread.h>
 
 #include "uthash.h"
 #include "errors.h"
@@ -69,7 +70,7 @@ typedef struct CacheKey{
 typedef struct CacheBlock {
     CacheKey key;
 
-    char*    data;
+    void*    data;
     size_t   actual_size;
     int      is_dirty;
     

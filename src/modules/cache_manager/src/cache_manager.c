@@ -34,7 +34,8 @@ static struct {
     CacheBlock* map;
     CacheBlock* lru_head;
     CacheBlock* lru_tail;
-} cache = {NULL};
+    pthread_mutex_t lock;
+} cache = {NULL, NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
 
 /**
  * @brief Retrieves a cache block from the cache based on the given key.
@@ -48,10 +49,15 @@ static struct {
  * 
  */
 CacheBlock* cache_get(CacheKey* key) {
-    printf("cache get\n");
     CacheBlock* blk = NULL;
+    
+    pthread_mutex_lock(&cache.lock);
+
     HASH_FIND(hh, cache.map, key, sizeof(CacheKey), blk);
     if (blk) cache_touch(blk);
+
+    pthread_mutex_unlock(&cache.lock);
+
     return blk;
 }
 
@@ -95,16 +101,30 @@ int cache_count() {
  * 
  */
 void cache_add_block(CacheBlock* blk) {
-    // Evict if cache is full
-    if (cache_count() >= CACHE_BLOCKS) cache_evict();
+    // P2 deve aspettare che P1 esca da cache_get
+    pthread_mutex_lock(&cache.lock);
 
-    if (cache_get(&blk->key)) {
+    CacheBlock* existing_blk = NULL;
+    HASH_FIND(hh, cache.map, &blk->key, sizeof(CacheKey), existing_blk);
+    
+    // P1 in cache_get
+    if (existing_blk) {
         // FIX: we should delete it
+        pthread_mutex_unlock(&cache.lock);
         return;
     }
+
+    // Evict if cache is full
+    if (cache_count() >= CACHE_BLOCKS) {
+        printf("\n --- MI PIACE LA BEGA (E ANCHE L'EVICT) --- \n");
+        cache_evict();
+    }
+    
     // Add to hash map
     HASH_ADD(hh, cache.map, key, sizeof(CacheKey), blk);
     cache_insert_head(blk);
+
+    pthread_mutex_unlock(&cache.lock);
 }
 
 /**
@@ -121,8 +141,8 @@ void cache_touch(CacheBlock* blk) {
     if (blk == cache.lru_head) return;
 
     // Remove from current position
-    if (blk->next)               blk->next->prev = blk->prev;
-    if (blk->prev)               blk->prev->next = blk->next;  
+    if (blk->next) blk->next->prev = blk->prev;
+    if (blk->prev) blk->prev->next = blk->next;
     if (blk == cache.lru_tail) cache.lru_tail = blk->prev;
 
     cache_insert_head(blk);
@@ -160,7 +180,7 @@ void cache_view() {
     CacheBlock* current = cache.lru_head;
     printf("Cache Blocks (Most Recent to Least Recent): %d\n", cache_count());
     while (current) {
-        printf("Key: [%s, %ld], Data: pisello per sempre\n", current->key.query, current->key.offset);
+        printf("Key: [%s, %ld]\n", current->key.query, current->key.offset);
         current = current->next;
     }
 }

@@ -7,5 +7,4 @@ cmake ..
 make
 
 mkdir -p /tmp/test
-./src/vfs2db -f -o db=../test.db /tmp/test
-
+./src/vfs2db -f -o db=../massive_legend.db /tmp/test

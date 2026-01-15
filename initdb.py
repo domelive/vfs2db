@@ -61,7 +61,7 @@ def create_test_db():
             ('Alice', 'Smith', 'alice@example.com'),
             ('Bob', 'Jones', 'bob@example.com'),
             ('Charlie', 'Day', 'charlie@example.com'),
-            ('Charlie', 'Kirk', str("".join([random.choice(['a', 'b', 'c', 'd']) for _ in range(100 * 1024 * 1024)]))),
+            ('Charlie', 'Kirk', 'a' * (50 * 1024 * 1024)),
         ]
         c.executemany("INSERT INTO users (name, surname, email) VALUES (?, ?, ?)", users_data)
         

@@ -214,8 +214,6 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
 
     va_end(args);
 
-    printf("Dynamic Query: %s\n", buffer);
-
     sqlite3_stmt* s;
     if (sqlite3_prepare_v2(db, buffer, -1, &s, NULL) != SQLITE_OK) {
         printf("Failed to prepare dynamic query %d: %s\n", qid, sqlite3_errmsg(db));
