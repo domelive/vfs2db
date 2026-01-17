@@ -12,6 +12,7 @@ target_include_directories(cache_manager
 
 target_link_libraries(cache_manager
     PUBLIC
+        logger
         utils
     PRIVATE
         PkgConfig::SQLITE3

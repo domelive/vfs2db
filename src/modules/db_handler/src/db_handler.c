@@ -45,16 +45,27 @@
  * 
  */
 status_t init_db_schema(DbSchema *db_schema) {
-    printf("init_db_schema\n");
+    LOG_DEBUG("Initializing database schema...");
+
     db_schema->tables_head = NULL;
 
     sqlite3_stmt *pstmt = qm_get_static_query_statement(QUERY_SELECT_TABLES_NAME);
     while (sqlite3_step(pstmt) == SQLITE_ROW) {
         const char *name = (const char*)sqlite3_column_text(pstmt, 0);
+        
         Schema* new_schema = calloc(1, sizeof(Schema));
+        if (!new_schema) {
+            LOG_ERROR("Failed to allocate memory for schema '%s'", name);
+            return STATUS_DB_ERROR;
+        }
+        
         new_schema->name = strdup(name);
         add_schema(db_schema, new_schema);
+
+        LOG_TRACE("Found table: %s", name);
     }
+
+    LOG_INFO("Database schema initialized: %d tables found.", count_schemas(db_schema));
 
     return STATUS_OK;
 }
@@ -81,11 +92,16 @@ status_t init_db_schema(DbSchema *db_schema) {
  * 
  */
 status_t init_schema(Schema *schema) {
-    printf("init_schema\n");
+    LOG_DEBUG("Initializing schema for table: %s", schema->name);
 
     // This query gets: column_name, is_pk, fk_table, fk_column_name
     sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_INFO, schema->name, schema->name);
+    if (!stmt) {
+        LOG_ERROR("Failed to build query statement for table info: '%s'", schema->name);
+        return STATUS_DB_ERROR;
+    }
 
+    int pk_count = 0, fk_count = 0, attr_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *column_name = sqlite3_column_text(stmt, 0);
         const bool is_pk = sqlite3_column_int(stmt, 1);
@@ -95,27 +111,56 @@ status_t init_schema(Schema *schema) {
         if (is_pk) {
             // Add to schema pk field
             Pk* pk = malloc(sizeof(Pk));
+            if (!pk) {
+                LOG_ERROR("Failed to allocate memory for primary key '%s' in table '%s'", column_name, schema->name);
+                sqlite3_finalize(stmt);
+                return STATUS_DB_ERROR;
+            }
+
             pk->name = strdup(column_name);
             add_pk_to_schema(schema, pk);
+
+            LOG_TRACE("  PK: %s", column_name);
+            pk_count++;
         }
         // Check if foreign key
         else if (fk_table != NULL) {
             // Add fk to schema
             Fk *fk = malloc(sizeof(Fk));
+            if (!fk) {
+                LOG_ERROR("Failed to allocate FK for column '%s'", column_name);
+                sqlite3_finalize(stmt);
+                return STATUS_DB_ERROR;
+            }
+
             fk->from = strdup(column_name);
             fk->table = strdup(fk_table);
             fk->to = strdup(fk_column_name);
             add_fk_to_schema(schema, fk);
+
+            LOG_TRACE("  FK: %s -> %s(%s)", column_name, fk_table, fk_column_name);
+            fk_count++;
         }
         // Normal attribute
         else {
             // Add to schema attr field
             Attr* attr = malloc(sizeof(Attr));
+            if (!attr) {
+                LOG_ERROR("Failed to allocate Attr for column '%s'", column_name);
+                sqlite3_finalize(stmt);
+                return STATUS_DB_ERROR;
+            }
             attr->name = strdup(column_name);
             add_attribute_to_schema(schema, attr);
+         
+            LOG_TRACE("  Attr: %s", column_name);
+            attr_count++;
         }
     }
     
+    LOG_DEBUG("Schema '%s' initialized: %d PKs, %d FKs, %d attrs",
+              schema->name, pk_count, fk_count, attr_count);
+
     sqlite3_finalize(stmt);
     return STATUS_OK;
 }
@@ -136,26 +181,36 @@ status_t init_schema(Schema *schema) {
  *  
  */
 status_t get_attribute_size(struct tokens* toks, size_t *size) {
-    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
+    LOG_TRACE("Getting attribute size: %s/%s/%s", 
+              toks->table, toks->record, toks->attribute);
     
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
+    if (!stmt) {
+        LOG_ERROR("Failed to build SELECT query for attribute size");
+        return STATUS_DB_ERROR;
+    }
+
     if(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
     
     // If there's no record matching the query (should not be possible)
     if (sqlite3_step(stmt) != SQLITE_ROW) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_ERROR("No row found for %s/%s/%s", 
+                  toks->table, toks->record, toks->attribute);
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
 
     // Calculate the bytes of the attribute
     *size = sqlite3_column_bytes(stmt, 0);
+
+    LOG_TRACE("Attribute size: %zu bytes", *size);
     
     if (*size < 0) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
@@ -188,8 +243,12 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
     char path[MAX_SIZE];
     snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
 
+    LOG_TRACE("Getting attribute bytes: path='%s', offset=%ld (block_offset=%ld)",
+              path, offset, block_offset);
+
     CacheKey* key = calloc(1, sizeof(CacheKey));
     if (!key) {
+        LOG_ERROR("Failed to allocate CacheKey");
         return STATUS_DB_ERROR;
     }
     
@@ -199,13 +258,15 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
     CacheBlock* blk;
     // CACHE HIT
     if ((blk = cache_get(key)) != NULL) {
-        printf("CACHE HIT\n");
-        // cache_view();
+        LOG_DEBUG("Cache hit for '%s' at offset %ld", path, block_offset);
         *bytes = (char *) blk->data;
         return STATUS_OK;   
     }
 
     // CACHE MISS
+    LOG_DEBUG("Cache miss for '%s' at offset %ld, fetching from DB", 
+              path, block_offset);
+
     // Build the statement
     sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db,
                                                           QUERY_TPL_SELECT_CHUNK_ATTRIBUTE,
@@ -213,30 +274,43 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
                                                           block_offset,
                                                           BLOCK_SIZE,
                                                           toks->table);
+    if (!stmt) {
+        LOG_ERROR("Failed to build chunk query");
+        free(key);
+        return STATUS_DB_ERROR;
+    }
 
     if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-        printf("\t%s\n", sqlite3_errmsg(db));        
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
+        free(key);
         return STATUS_DB_ERROR;
     }
 
     if (sqlite3_step(stmt) != SQLITE_ROW) {
-        printf("\t%s\n", sqlite3_errmsg(db));        
+        LOG_ERROR("No data found for chunk query");
         sqlite3_finalize(stmt);
+        free(key);
         return STATUS_DB_ERROR;
     }
 
     blk = malloc(sizeof(CacheBlock));
     if (!blk) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to allocate CacheBlock");
         sqlite3_finalize(stmt);
+        free(key);
         return STATUS_DB_ERROR;
     }
     blk->key = *key;
     blk->data = strdup((char*)sqlite3_column_text(stmt, 0));
     blk->actual_size = (size_t)sqlite3_column_bytes(stmt, 0);
     blk->is_dirty = 0;
+
+    // free(key);  // Content copied to blk->key
+
     cache_add_block(blk);
+
+    LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
 
     // Calculate relative offset
     size_t relative_offset = offset - block_offset;
@@ -263,16 +337,23 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
  * 
  */
 status_t get_attribute_type(struct tokens *toks, int* type) {
+    LOG_TRACE("Getting attribute type: %s/%s/%s",
+              toks->table, toks->record, toks->attribute);
+
     sqlite3_stmt *stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
+    if (!stmt) {
+        LOG_ERROR("Failed to build query for attribute type");
+        return STATUS_DB_ERROR;
+    }
 
     if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
 
     if (sqlite3_step(stmt) != SQLITE_ROW) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_ERROR("No row found for attribute type query");
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
@@ -301,27 +382,38 @@ status_t get_attribute_type(struct tokens *toks, int* type) {
  * 
  */
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
+    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu, append=%d)",
+              toks->table, toks->record, toks->attribute, size, append);
+
     sqlite3_stmt *stmt = (append == 0)
         ? qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table, toks->attribute)
         : qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE_APPEND, toks->table, toks->attribute);
 
+    if (!stmt) {
+        LOG_ERROR("Failed to build UPDATE query");
+        return STATUS_DB_ERROR;
+    }
+
     if (sqlite3_bind_text(stmt, 1, buffer, (int)size, SQLITE_TRANSIENT) != SQLITE_OK) {
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
-        printf("\t%s\n", sqlite3_errmsg(db));
-        return STATUS_DB_ERROR; 
+        return STATUS_DB_ERROR;
     }
 
     if (sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
-        printf("\t%s\n", sqlite3_errmsg(db));
         return STATUS_DB_ERROR;
     }
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
-        printf("\t%s\n", sqlite3_errmsg(db));
         return STATUS_DB_ERROR;
     }
+
+    int changes = sqlite3_changes(db);
+    LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
     
     sqlite3_finalize(stmt);
     return STATUS_OK;
@@ -340,12 +432,15 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
  * 
  */
 status_t get_table_rowids(const char* table, char* records[], int* n_records) {
+    LOG_TRACE("Getting row IDs for table: %s", table);
+
     // Rebuild the path from toks
     char path[MAX_SIZE];
     snprintf(path, MAX_SIZE, "/%s", table);
     
     CacheKey* key = calloc(1, sizeof(CacheKey));
     if (!key) {
+        LOG_ERROR("Failed to allocate CacheKey");
         return STATUS_DB_ERROR;
     }
     
@@ -355,7 +450,7 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     // cache hit
     CacheBlock* blk;
     if ((blk = cache_get(key)) != NULL) {
-        printf("\tCACHE HIT\n");
+        LOG_DEBUG("Cache hit for table rowids: %s", table);
         *n_records = blk->actual_size;
         
         char** cached_records = (char**) blk->data;
@@ -367,27 +462,49 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     }
     
     // cache miss
+    LOG_DEBUG("Cache miss for table rowids: %s", table);
+
     sqlite3_stmt *stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_ROWIDS, table);
 
-    if (stmt == NULL) {
+    if (!stmt) {
+        LOG_ERROR("Failed to build rowids query for table: %s", table);
+        free(key);
         return STATUS_DB_ERROR;
     }
 
     int record_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        const char *rowid = sqlite3_column_text(stmt, 0);
+        const char *rowid = (const char*) sqlite3_column_text(stmt, 0);
         records[record_count++] = strdup(rowid);
+
+        // if (record_count >= MAX_SIZE) {
+        //     LOG_WARN("Table '%s' has more than %d rows, truncating", 
+        //              table, MAX_SIZE);
+        //     break;
+        // }
     }
 
     *n_records = record_count;
+    LOG_DEBUG("Found %d rows in table '%s'", record_count, table);
 
     // populate cache
     blk = malloc(sizeof(CacheBlock));
     if (!blk) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_WARN("Failed to allocate cache block for rowids, continuing without cache");
+        free(key);
+        sqlite3_finalize(stmt);
+        return STATUS_OK;  // Non-fatal, we have the data
     }
 
     char** records_copy = malloc(record_count * sizeof(char*));
+    if (!records_copy) {
+        LOG_WARN("Failed to allocate records copy for cache");
+        free(blk);
+        free(key);
+        sqlite3_finalize(stmt);
+        return STATUS_OK;
+    }
+    
     for (int i = 0; i < record_count; i++) {
         records_copy[i] = strdup(records[i]);
     }
@@ -396,9 +513,11 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     blk->data = records_copy;
     blk->actual_size = record_count;
     blk->is_dirty = 0;
+    
+    // free(key);  // Content copied to blk->key
     cache_add_block(blk);
 
-    cache_view();
+    // cache_view();
 
     sqlite3_finalize(stmt);
     return STATUS_OK;
@@ -417,6 +536,8 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
  * 
  */
 status_t get_rowid_from_pks(const char *table, Fk* fks[], char* fks_values[], int num_fks, int* rowid) {
+    LOG_TRACE("Getting rowid from PKs for table: %s (num_fks=%d)", table, num_fks);
+
     // FIX: this function should be implemented better using the query manager prepared statements
     sqlite3_stmt *pstmt;
     
@@ -430,22 +551,23 @@ status_t get_rowid_from_pks(const char *table, Fk* fks[], char* fks_values[], in
         str_len += snprintf(query_str + str_len, sizeof(query_str) - str_len, "%s = '%s'", fks[i]->to, fks_values[i]);
     }
 
-    // printf("\tquery: %s\n", query_str);
+    LOG_TRACE("Built query: %s", query_str);
 
     int rc = sqlite3_prepare_v2(db, (const char*) query_str, -1, &pstmt, NULL);
     if (rc != SQLITE_OK) {
+        LOG_SQLITE_ERROR(db);
         sqlite3_finalize(pstmt);
-        printf("\t%s\n", sqlite3_errmsg(db));
         return STATUS_DB_ERROR;
     }
 
     if(sqlite3_step(pstmt) != SQLITE_ROW) {
-        printf("\t%s\n", sqlite3_errmsg(db));
+        LOG_ERROR("No matching row found for FK lookup in table '%s'", table);
         sqlite3_finalize(pstmt);
         return STATUS_DB_ERROR;
     }
 
     *rowid = sqlite3_column_int(pstmt, 0);
+    LOG_DEBUG("Found rowid=%d for FK lookup in table '%s'", *rowid, table);
     
     sqlite3_finalize(pstmt);
     return STATUS_OK;

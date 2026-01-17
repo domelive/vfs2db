@@ -30,6 +30,7 @@
 #include <stdarg.h>
 
 #include "errors.h"
+#include "logger.h"
 
 /**
  * Query Identifiers

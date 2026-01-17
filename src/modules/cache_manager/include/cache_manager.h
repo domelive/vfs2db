@@ -31,6 +31,7 @@
 #include "uthash.h"
 #include "errors.h"
 #include "const.h"
+#include "logger.h"
 
 /**
  * @brief Structure representing a key for cache blocks.
@@ -126,5 +127,6 @@ void cache_evict();
 CacheBlock* cache_get(CacheKey* key);
 
 void cache_view();
+void cache_get_stats(unsigned long* hits, unsigned long* misses, unsigned long* evictions);
 
 #endif // CACHE_MANAGER_H

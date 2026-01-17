@@ -12,6 +12,7 @@ target_include_directories(query_manager
 
 target_link_libraries(query_manager
     PUBLIC
+        logger
         utils
     PRIVATE
         PkgConfig::SQLITE3

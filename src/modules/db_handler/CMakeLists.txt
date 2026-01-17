@@ -13,6 +13,7 @@ target_include_directories(db_handler
 target_link_libraries(db_handler
     PUBLIC
         utils
+        logger
         query_manager
         cache_manager
     PRIVATE

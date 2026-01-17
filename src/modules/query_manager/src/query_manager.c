@@ -141,15 +141,29 @@ static query_t query_store[] = {
  * 
  */
 status_t qm_init(sqlite3* db) {
+    LOG_DEBUG("Initializing Query Manager...");
+    
+    int static_count = 0;
+    int dynamic_count = 0;
+
     for (int i = 0; i < QUERY_COUNT; i++) {
         if (!query_store[i].is_dynamic) {
+            LOG_TRACE("Preparing static query %d: %.50s...", i, query_store[i].sql);
+            
             int rc = sqlite3_prepare_v2(db, query_store[i].sql, -1, &query_store[i].stmt, NULL);
             if (rc != SQLITE_OK) {
-                printf("Failed to prepare static query %d: %s\n", i, sqlite3_errmsg(db));
+                LOG_ERROR("Failed to prepare static query %d: %s", 
+                          i, sqlite3_errmsg(db));
                 return STATUS_DB_ERROR;
             }
+            static_count++;
+        } else {
+            dynamic_count++;
         }
     }
+    
+    LOG_INFO("Query Manager initialized: %d static queries, %d dynamic queries.", static_count, dynamic_count);
+    
     return STATUS_OK;
 }
 
@@ -164,8 +178,12 @@ status_t qm_init(sqlite3* db) {
  * 
  */
 char *qm_get_str(QueryID qid) {
-    if (qid < 0 || qid >= QUERY_COUNT) return NULL;
-    return query_store[qid].sql;
+    if (qid < 0 || qid >= QUERY_COUNT) {
+        LOG_WARN("Invalid QueryID: %d", qid);        
+        return NULL;
+    }
+
+    return (char*)query_store[qid].sql;
 }
 
 /**
@@ -179,12 +197,22 @@ char *qm_get_str(QueryID qid) {
  * 
  */
 sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
-    if (qid < 0 || qid >= QUERY_COUNT || query_store[qid].is_dynamic) return NULL;
+    if (qid < 0 || qid >= QUERY_COUNT) {
+        LOG_ERROR("Invalid QueryID: %d", qid);
+        return NULL;
+    }
     
+    if (query_store[qid].is_dynamic) {
+        LOG_ERROR("QueryID %d is dynamic, use qm_build_dynamic_query_statement", qid);
+        return NULL;
+    }
+
     sqlite3_stmt* s = query_store[qid].stmt;
     
     sqlite3_reset(s);
     sqlite3_clear_bindings(s);
+
+    LOG_TRACE("Retrieved static statement for QueryID %d", qid);
 
     return s;
 }
@@ -202,21 +230,30 @@ sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
  * 
  */
 sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
-    if (qid < 0 || qid >= QUERY_COUNT || !query_store[qid].is_dynamic) return NULL;
+    if (qid < 0 || qid >= QUERY_COUNT) {
+        LOG_ERROR("Invalid QueryID: %d", qid);
+        return NULL;
+    }
+
+    if (!query_store[qid].is_dynamic) {
+        LOG_ERROR("QueryID %d is static, use qm_get_static_query_statement", qid);
+        return NULL;
+    }
 
     const char* tpl = query_store[qid].sql;
     char buffer[2048];
 
     va_list args;
     va_start(args, qid);
-
     vsnprintf(buffer, sizeof(buffer), tpl, args);
-
     va_end(args);
 
+    LOG_TRACE("Built dynamic query: %.100s%s", 
+              buffer, strlen(buffer) > 100 ? "..." : "");
+    
     sqlite3_stmt* s;
     if (sqlite3_prepare_v2(db, buffer, -1, &s, NULL) != SQLITE_OK) {
-        printf("Failed to prepare dynamic query %d: %s\n", qid, sqlite3_errmsg(db));
+        LOG_ERROR("Failed to prepare dynamic query %d: %s", qid, sqlite3_errmsg(db));
         return NULL;
     }
 
@@ -230,10 +267,16 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
  * 
 */
 void qm_cleanup() {
+    LOG_DEBUG("Cleaning up Query Manager...");
+
+    int finalized = 0;
     for (int i = 0; i < QUERY_COUNT; i++) {
         if (query_store[i].stmt) {
             sqlite3_finalize(query_store[i].stmt);
             query_store[i].stmt = NULL;
+            finalized++;
         }
     }
+
+    LOG_INFO("Query Manager cleanup complete: %d statements finalized", finalized);
 }

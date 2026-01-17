@@ -40,6 +40,7 @@
 #include "types.h"
 #include "errors.h"
 #include "helpers.h"
+#include "logger.h"
 
 extern sqlite3* db;
 extern DbSchema* db_schema;

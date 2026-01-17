@@ -35,7 +35,19 @@ static struct {
     CacheBlock* lru_head;
     CacheBlock* lru_tail;
     pthread_mutex_t lock;
-} cache = {NULL, NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
+
+    unsigned long hits;
+    unsigned long misses;
+    unsigned long evictions;
+} cache = {
+    .map       = NULL, 
+    .lru_head  = NULL, 
+    .lru_tail  = NULL, 
+    .lock      = PTHREAD_MUTEX_INITIALIZER,
+    .hits      = 0,
+    .misses    = 0,
+    .evictions = 0
+};
 
 /**
  * @brief Retrieves a cache block from the cache based on the given key.
@@ -54,7 +66,18 @@ CacheBlock* cache_get(CacheKey* key) {
     pthread_mutex_lock(&cache.lock);
 
     HASH_FIND(hh, cache.map, key, sizeof(CacheKey), blk);
-    if (blk) cache_touch(blk);
+    if (blk) {
+        cache_touch(blk);
+        cache.hits++;
+        LOG_TRACE("Cache HIT [%lu/%lu]: path='%s', offset=%ld",
+            cache.hits, cache.hits + cache.misses,
+            key->query, key->offset);
+    } else {
+        cache.misses++;
+        LOG_TRACE("Cache MISS [%lu/%lu]: path='%s', offset=%ld",
+            cache.misses, cache.hits + cache.misses,
+            key->query, key->offset);
+    }
 
     pthread_mutex_unlock(&cache.lock);
 
@@ -78,6 +101,9 @@ static inline void cache_insert_head(CacheBlock* blk) {
     cache.lru_head = blk;
 
     if (cache.lru_tail == NULL) cache.lru_tail = blk;
+
+    LOG_TRACE("Inserted block at head: path='%s', offset=%ld",
+        blk->key.query, blk->key.offset);
 }
 
 /**
@@ -109,20 +135,30 @@ void cache_add_block(CacheBlock* blk) {
     
     // P1 in cache_get
     if (existing_blk) {
+        LOG_DEBUG("Block already exists in cache, skipping: path='%s', offset=%ld",
+            blk->key.query, blk->key.offset);
+
         // FIX: we should delete it
         pthread_mutex_unlock(&cache.lock);
         return;
     }
 
     // Evict if cache is full
-    if (cache_count() >= CACHE_BLOCKS) {
-        printf("\n --- MI PIACE LA BEGA (E ANCHE L'EVICT) --- \n");
+    int current_count = cache_count();
+    if (current_count >= CACHE_BLOCKS) {
+        LOG_DEBUG("Cache full (%d/%d blocks), evicting least recently used block",
+            current_count, CACHE_BLOCKS);
         cache_evict();
+        cache.evictions++;
     }
     
     // Add to hash map
     HASH_ADD(hh, cache.map, key, sizeof(CacheKey), blk);
     cache_insert_head(blk);
+
+    LOG_DEBUG("Added block to cache [%d/%d]: path='%s', offset=%ld, size=%zu",
+        cache_count(), CACHE_BLOCKS,
+        blk->key.query, blk->key.offset, blk->actual_size);
 
     pthread_mutex_unlock(&cache.lock);
 }
@@ -140,6 +176,9 @@ void cache_touch(CacheBlock* blk) {
     // If already at head, nothing to do
     if (blk == cache.lru_head) return;
 
+    LOG_TRACE("Touching block (moving to head): path='%s', offset=%ld",
+        blk->key.query, blk->key.offset);
+
     // Remove from current position
     if (blk->next) blk->next->prev = blk->prev;
     if (blk->prev) blk->prev->next = blk->next;
@@ -156,31 +195,76 @@ void cache_touch(CacheBlock* blk) {
  * 
  */
 void cache_evict() {
-    if (cache.lru_tail) {
-        CacheBlock* to_evict = cache.lru_tail;
-
-        // Remove from hash map
-        HASH_DEL(cache.map, to_evict);
-
-        // Update LRU pointers
-        if (to_evict->prev) {
-            to_evict->prev->next = NULL;
-            cache.lru_tail = to_evict->prev;
-        } else {
-            cache.lru_head = NULL;
-            cache.lru_tail = NULL;
-        }
-
-        // Free the evicted block
-        free(to_evict);
+    if (!cache.lru_tail) {
+        LOG_WARN("Cache eviction called but cache is empty");
+        return;
     }
+
+    CacheBlock* to_evict = cache.lru_tail;
+
+    LOG_DEBUG("Evicting block: path='%s', offset=%ld, dirty=%d",
+        to_evict->key.query, to_evict->key.offset, to_evict->is_dirty);
+
+    // TODO: if dirty, write back to DB
+    if (to_evict->is_dirty) {
+        LOG_WARN("Evicted block is dirty, write-back not implemented yet: path='%s', offset=%ld",
+            to_evict->key.query, to_evict->key.offset);
+    }
+
+    // Remove from hash map
+    HASH_DEL(cache.map, to_evict);
+
+    // Update LRU pointers
+    if (to_evict->prev) {
+        to_evict->prev->next = NULL;
+        cache.lru_tail = to_evict->prev;
+    } else {
+        cache.lru_head = NULL;
+        cache.lru_tail = NULL;
+    }
+
+    // Free the evicted block
+    if (to_evict->data) free(to_evict->data);
+    free(to_evict);
+
+    LOG_TRACE("Eviction complete. Total evictions: %lu", cache.evictions);
 }
 
 void cache_view() {
-    CacheBlock* current = cache.lru_head;
-    printf("Cache Blocks (Most Recent to Least Recent): %d\n", cache_count());
-    while (current) {
-        printf("Key: [%s, %ld]\n", current->key.query, current->key.offset);
-        current = current->next;
+    pthread_mutex_lock(&cache.lock);
+    
+    int count = cache_count();
+    LOG_DEBUG("=== Cache View ===");
+    LOG_DEBUG("Blocks: %d/%d (%.1f%% full)", 
+              count, CACHE_BLOCKS, 
+              (float)count / CACHE_BLOCKS * 100);
+    LOG_DEBUG("Stats: hits=%lu, misses=%lu, evictions=%lu, hit_rate=%.1f%%",
+              cache.hits, cache.misses, cache.evictions,
+              cache.hits + cache.misses > 0 
+                  ? (float)cache.hits / (cache.hits + cache.misses) * 100 
+                  : 0.0);
+    
+    if (logger_get_level() <= LOG_LEVEL_TRACE) {
+        LOG_TRACE("LRU order (most recent first):");
+        CacheBlock* current = cache.lru_head;
+        int idx = 0;
+        while (current) {
+            LOG_TRACE("  [%d] query='%s', offset=%ld, size=%zu, dirty=%d",
+                      idx++, current->key.query, current->key.offset,
+                      current->actual_size, current->is_dirty);
+            current = current->next;
+        }
     }
+    
+    LOG_DEBUG("==================");
+    
+    pthread_mutex_unlock(&cache.lock);
+}
+
+void cache_get_stats(unsigned long* hits, unsigned long* misses, unsigned long* evictions) {
+    pthread_mutex_lock(&cache.lock);
+    if (hits) *hits = cache.hits;
+    if (misses) *misses = cache.misses;
+    if (evictions) *evictions = cache.evictions;
+    pthread_mutex_unlock(&cache.lock);
 }
