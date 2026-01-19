@@ -29,7 +29,7 @@
 
 #include "logger.h"
 
-#define ARENA_ALIGNMENT 8   /**< Alignment for arena memory blocks in bytes */
+#define ARENA_ALIGNMENT (sizeof(void*))   /**< Alignment for arena memory blocks in bytes */
 
 /**
  * @brief Structure representing a memory arena for efficient memory allocation.
@@ -165,5 +165,19 @@ size_t arena_get_available_size(Arena* arena);
  * @return Total size of the arena in bytes.
  */
 size_t arena_get_total_size(Arena* arena);
+
+// =============================================================
+// View Functions
+// =============================================================
+
+/**
+ * @brief Displays the current state of the arena.
+ * 
+ * This function logs the used size, available size, and total size
+ * of the arena for debugging purposes.
+ * 
+ * @param[in] arena Pointer to the `Arena` to view.
+ */
+void arena_view(Arena* arena);
 
 #endif // ARENA_H

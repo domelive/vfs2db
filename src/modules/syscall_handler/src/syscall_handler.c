@@ -24,7 +24,32 @@
 #include "syscall_handler.h"
 
 extern sqlite3*  db;        /**< Database connection handle */
-extern DbSchema* db_schema; /**< Database schema structure */ 
+extern DbSchema* db_schema; /**< Database schema structure */
+
+static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficient allocations */
+
+/**
+ * Ensure Arena Init
+ * 
+ * @brief Retrieves the thread-local memory arena, creating it if it doesn't exist.
+ * 
+ * @return Pointer to the thread-local Arena
+ * 
+ */
+void ensure_arena_init() {
+    if (!arena) {
+        LOG_DEBUG("Creating thread-local arena");
+
+        arena = arena_create(ARENA_DEFAULT_SIZE);
+        if (!arena) {
+            LOG_FATAL("Failed to create thread-local arena");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    LOG_TRACE("Resetting thread-local arena for reuse");
+    arena_reset(arena);
+}
 
 /**
  * Tokenize Path
@@ -44,16 +69,15 @@ static inline struct tokens* tokenize_path(const char* path) {
         return NULL;
     }
 
-    struct tokens* toks = malloc(sizeof(struct tokens));
+    struct tokens* toks = arena_alloc(arena, sizeof(struct tokens));
     if (!toks) {
         LOG_ERROR("Failed to allocate tokens struct");
         return NULL;
     }
 
-    char* path_copy = strdup(path); 
+    char* path_copy = arena_strdup(arena, path); 
     if (!path_copy) {
         LOG_ERROR("Failed to duplicate path string");
-        free(toks);
         return NULL;
     }
 
@@ -61,13 +85,11 @@ static inline struct tokens* tokenize_path(const char* path) {
     if (cursor[0] == '/') cursor++;
 
     char* t = strtok(cursor, "/");
-    toks->table = t ? strdup(t) : NULL;
+    toks->table = t ? arena_strdup(arena, t) : NULL;
     t = strtok(NULL, "/");
-    toks->record = t ? strdup(t) : NULL;
+    toks->record = t ? arena_strdup(arena, t) : NULL;
     t = strtok(NULL, "/");
-    toks->attribute = t ? strdup(t) : NULL;
-
-    free(path_copy);
+    toks->attribute = t ? arena_strdup(arena, t) : NULL;
 
     LOG_TRACE("Tokenized path '%s': table=%s, record=%s, attr=%s",
               path,
@@ -88,14 +110,14 @@ static inline struct tokens* tokenize_path(const char* path) {
  * @return Pointer to a new string without the extension
  * 
  */
-static inline char *remove_extension(const char *path) {
+static inline char* remove_extension(const char* path) {
     int noext_path_length = strlen(path) - 7;
     if (noext_path_length <= 0) {
         LOG_WARN("Path too short to have extension: %s", path);
         return NULL;
     }
 
-    char *noext_path = malloc(noext_path_length + 1);
+    char* noext_path = arena_alloc(arena, noext_path_length + 1);
     if (!noext_path) {
         LOG_ERROR("Failed to allocate path without extension");
         return NULL;
@@ -229,8 +251,12 @@ void vfs2db_destroy(void *private_data) {
         fuse_opt_free_args(args);
         LOG_DEBUG("FUSE arguments freed");
     }
-    
-    // LOG_INFO("VFS2DB shutdown complete");
+
+    if (arena) {
+        LOG_DEBUG("Destroying thread-local arena");
+        arena_destroy(arena);
+        arena = NULL;
+    }
 }
 
 /**
@@ -247,7 +273,10 @@ void vfs2db_destroy(void *private_data) {
  */
 int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
     (void)fi;
+    
     LOG_FUSE_ENTER("getattr", path);
+
+    ensure_arena_init();
     
     memset(st, 0, sizeof(*st));
 
@@ -271,7 +300,6 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         
         struct tokens *toks = tokenize_path(noext_path);
         if (!toks) {
-            free(noext_path);
             LOG_FUSE_EXIT("getattr", -ENOMEM);
             return -ENOMEM;
         }
@@ -297,23 +325,12 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         size_t attr_size;
         if (get_attribute_size(toks, &attr_size) == STATUS_DB_ERROR) {
             LOG_ERROR("Failed to get attribute size for %s", path);
-            free(toks->table);
-            free(toks->record);
-            free(toks->attribute);
-            free(toks);
-            free(noext_path);
             LOG_FUSE_EXIT("getattr", -EIO);
             return -EIO;
         }
 
         st->st_size = attr_size;
         LOG_TRACE("getattr: size=%zu", attr_size);
-
-        free(toks->table);
-        free(toks->record);
-        free(toks->attribute);
-        free(toks);
-        free(noext_path);
     }
 
     LOG_FUSE_EXIT("getattr", 0);
@@ -337,28 +354,29 @@ int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size
     LOG_FUSE_ENTER("getxattr", path);
     LOG_TRACE("getxattr: name=%s, bufsize=%zu", name, size);
 
+    ensure_arena_init();
+
     if (strcmp(name, "user.type") != 0) {
         LOG_TRACE("getxattr: unsupported attribute '%s'", name);
         return -ENODATA;
     }
 
     char *noext_path = remove_extension(path);
-    if (!noext_path) return -ENOMEM;
+    if (!noext_path) {
+        LOG_ERROR("Failed to remove extension from path: %s", path);
+        return -ENOMEM;
+    }
     
     struct tokens *toks = tokenize_path(noext_path);
     if (!toks) {
-        free(noext_path);
+        LOG_ERROR("Failed to tokenize path: %s", path);
         return -ENOMEM;
     }
 
     const char* t_str;
     int attr_type;
     if (get_attribute_type(toks, &attr_type) != STATUS_OK) {
-        free(toks->table);
-        free(toks->record);
-        free(toks->attribute);
-        free(toks);
-        free(noext_path);
+        LOG_ERROR("getxattr: failed to get attribute type for %s", path);
         return -EIO;
     }
 
@@ -377,12 +395,7 @@ int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size
     if (size == 0) return strlen(t_str);
     if (size < strlen(t_str)) return -ERANGE;
     
-    strcpy(value, t_str);
-
-    free(toks->table);
-    free(toks->record);
-    free(toks->attribute);
-    free(toks);
+    strncpy(value, t_str, size);
 
     LOG_FUSE_EXIT("getxattr", strlen(t_str));
     return strlen(t_str);
@@ -410,6 +423,8 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
 
     LOG_FUSE_ENTER("readdir", path);
 
+    ensure_arena_init();
+
     filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
     filler(buffer, "..", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
 
@@ -418,7 +433,7 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     // path: /orders/2  |   /orders/2/
 
     // Togliamo slash alla fine, se c'e'
-    char *path_copy = strdup(path);
+    char *path_copy = arena_strdup(arena, path);
     if (!path_copy) {
         LOG_FUSE_EXIT("readdir", -ENOMEM);
         return -ENOMEM;
@@ -430,7 +445,6 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     
     struct tokens *toks = tokenize_path(path_copy);
     if (!toks) {
-        free(path_copy);
         LOG_FUSE_EXIT("readdir", -ENOMEM);
         return -ENOMEM;
     }
@@ -518,12 +532,6 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
             break;
     }
 
-    free(path_copy);
-    free(toks->table);
-    free(toks->record);
-    free(toks->attribute);
-    free(toks);
-
     LOG_FUSE_EXIT("readdir", 0);
     return 0;
 }
@@ -548,6 +556,8 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     LOG_FUSE_ENTER("read", path);
     LOG_TRACE("read: size=%zu, offset=%ld", size, offset);
 
+    ensure_arena_init();
+
     size_t path_len = strlen(path);
     if (path_len < 7) return -1; // Safety check
 
@@ -559,7 +569,6 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 
     struct tokens *toks = tokenize_path(noext_path);
     if (!toks) {
-        free(noext_path);
         LOG_FUSE_EXIT("read", -ENOMEM);
         return -ENOMEM;
     }
@@ -568,16 +577,13 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     char *bytes = NULL;
 
     if (get_attribute_size(toks, &total_size) == STATUS_DB_ERROR) {
-        free(toks->table); free(toks->record); free(toks->attribute);
-        free(toks); free(noext_path);
+        LOG_ERROR("read: failed to get attribute size");
         return -1;
     }
 
     // assert (offset <= total_size);
     if (offset >= total_size) {
         LOG_TRACE("read: offset %ld >= size %zu, returning EOF", offset, total_size);
-        free(toks->table); free(toks->record); free(toks->attribute);
-        free(toks); free(noext_path);
         LOG_FUSE_EXIT("read", 0);
         return 0;
     }
@@ -585,8 +591,6 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     // Let's use the cache
     if (get_attribute_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute bytes");
-        free(toks->table); free(toks->record); free(toks->attribute);
-        free(toks); free(noext_path);
         LOG_FUSE_EXIT("read", -EIO);        
         return -1;
     }
@@ -595,15 +599,8 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     memcpy(buffer, bytes, bytes_to_copy);
 
     LOG_DEBUG("read: returned %zu bytes from offset %ld", bytes_to_copy, offset);
-
-    // Cleanup
-    free(toks->table);
-    free(toks->record);
-    free(toks->attribute);
-    free(toks);
-    free(noext_path);
-
     LOG_FUSE_EXIT("read", bytes_to_copy);
+    
     return bytes_to_copy;
 }
 
@@ -627,6 +624,8 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     LOG_FUSE_ENTER("write", path);
     LOG_TRACE("write: size=%zu, offset=%ld", size, offset);
 
+    ensure_arena_init();
+
     char *noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_FUSE_EXIT("write", -ENOMEM);
@@ -635,7 +634,6 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     
     struct tokens *toks = tokenize_path(noext_path);
     if (!toks) {
-        free(noext_path);
         LOG_FUSE_EXIT("write", -ENOMEM);
         return -ENOMEM;
     }
@@ -643,25 +641,14 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     int append = (offset == 0) ? 0 : 1;
     if (update_attribute_value(toks, buffer, size, append) == STATUS_DB_ERROR) {
         LOG_ERROR("write: failed to update attribute");
-        free(toks->table);
-        free(toks->record);
-        free(toks->attribute);
-        free(toks);
-        free(noext_path);
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
     }
 
     LOG_DEBUG("write: wrote %zu bytes at offset %ld (append=%d)", 
               size, offset, append);
-
-    free(toks->table);
-    free(toks->record);
-    free(toks->attribute);
-    free(toks);
-    free(noext_path);
-
     LOG_FUSE_EXIT("write", size);
+    
     return size;
 }
 
@@ -706,6 +693,8 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi) {
 int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     LOG_FUSE_ENTER("readlink", path);
 
+    ensure_arena_init();
+
     char *noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_FUSE_EXIT("readlink", -ENOMEM);
@@ -714,7 +703,6 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
     struct tokens *toks = tokenize_path(noext_path);
     if (!toks) {
-        free(noext_path);
         LOG_FUSE_EXIT("readlink", -ENOMEM);
         return -ENOMEM;
     }
@@ -723,11 +711,6 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     Schema* table = find_schema_by_name(db_schema, toks->table);
     if (!table) {
         LOG_ERROR("readlink: table not found: %s", toks->table);
-        free(toks->table);
-        free(toks->record);
-        free(toks->attribute);
-        free(toks);
-        free(noext_path);
         LOG_FUSE_EXIT("readlink", -ENOENT);
         return -ENOENT;
     }
@@ -736,11 +719,6 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     Fk* fk = find_fk_by_name(table, toks->attribute);
     if (!fk) {
         LOG_ERROR("readlink: FK not found: %s.%s", toks->table, toks->attribute);
-        free(toks->table);
-        free(toks->record);
-        free(toks->attribute);
-        free(toks);
-        free(noext_path);
         LOG_FUSE_EXIT("readlink", -ENOENT);
         return -ENOENT;
     }
@@ -771,11 +749,6 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
         if (get_attribute_bytes(&fk_toks, 0, &value) != STATUS_OK) {
             LOG_ERROR("readlink: failed to get FK value for %s", fks[i]->from);
-            free(toks->table);
-            free(toks->record);
-            free(toks->attribute);
-            free(toks);
-            free(noext_path);
             LOG_FUSE_EXIT("readlink", -EIO);
             return -EIO;
         }
@@ -787,11 +760,6 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     int row_id;
     if (get_rowid_from_pks(fk->table, fks, fk_values, n_same_fks, &row_id) != STATUS_OK) {
         LOG_ERROR("readlink: failed to resolve FK target");
-        free(toks->table);
-        free(toks->record);
-        free(toks->attribute);
-        free(toks);
-        free(noext_path);
         LOG_FUSE_EXIT("readlink", -EIO);
         return -EIO;
     }
@@ -802,13 +770,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     snprintf(buffer, size, "../../%s/%d/%s.vfs2db", fk->table, row_id, fk->to);
 
     LOG_DEBUG("readlink: target=%s", buffer);
-
-    free(toks->table);
-    free(toks->record);
-    free(toks->attribute);
-    free(toks);
-    free(noext_path);
-
     LOG_FUSE_EXIT("readlink", 0);
+    
     return 0;
 }

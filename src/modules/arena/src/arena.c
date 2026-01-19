@@ -37,7 +37,21 @@
  * 
  * @return Pointer to the newly created `Arena` structure, or NULL on failure.
  */
-Arena* arena_create(size_t size);
+Arena* arena_create(size_t size) {
+    uint8_t* mem = malloc(sizeof(Arena) + size);
+    if (!mem) {
+        LOG_ERROR("Failed to allocate memory for arena of size %zu", size);
+        return NULL;
+    }
+
+    Arena* arena = (Arena*)mem;
+    
+    arena->base_pos = mem + sizeof(Arena);
+    arena->total_size = size;
+    arena->offset = 0;
+
+    return arena;
+}
 
 /**
  * @brief Destroys the memory arena and frees all associated memory.
@@ -47,7 +61,11 @@ Arena* arena_create(size_t size);
  * 
  * @param[in] arena Pointer to the `Arena` to destroy.
  */
-void arena_destroy(Arena* arena);
+void arena_destroy(Arena* arena) {
+    assert(arena != NULL && "arena_destroy called with NULL arena");
+
+    free(arena);
+}
 
 // =============================================================
 // Memory Allocation Functions
@@ -64,7 +82,23 @@ void arena_destroy(Arena* arena);
  * 
  * @return Pointer to the allocated memory block, or NULL if there is insufficient space.
  */
-void* arena_alloc(Arena* arena, size_t size);
+void* arena_alloc(Arena* arena, size_t size) {
+    assert(arena != NULL && "arena_alloc called with NULL arrena");
+
+    uintptr_t padding = (ARENA_ALIGNMENT - (arena->offset % ARENA_ALIGNMENT)) % ARENA_ALIGNMENT;
+
+    if (arena->offset + padding + size > arena->total_size) {
+        LOG_ERROR("Arena out of memory: requested %zu bytes, available %zu bytes",
+                  size, arena_get_available_size(arena));
+        return NULL;
+    }
+
+    arena->offset += padding;
+    void* ptr = arena->base_pos + arena->offset;
+    arena->offset += size;
+
+    return ptr;
+}
 
 /**
  * @brief Allocates zero-initialized memory from the arena.
@@ -79,7 +113,18 @@ void* arena_alloc(Arena* arena, size_t size);
  * 
  * @return Pointer to the allocated memory block, or NULL if there is insufficient space.
  */
-void* arena_calloc(Arena* arena, size_t count, size_t size);
+void* arena_calloc(Arena* arena, size_t count, size_t size) {
+    assert(arena != NULL && "arena_calloc called with NULL arena");
+    
+    void* ptr = arena_alloc(arena, count * size);
+    
+    if (ptr) {
+        LOG_TRACE("arena_calloc: zero-initializing %zu bytes", count * size);
+        memset(ptr, 0, count * size);
+    }
+
+    return ptr;
+}
 
 /**
  * @brief Duplicates a string into the arena.
@@ -92,7 +137,20 @@ void* arena_calloc(Arena* arena, size_t count, size_t size);
  * 
  * @return Pointer to the duplicated string in the arena, or NULL if there is insufficient space.
  */
-char* arena_strdup(Arena* arena, const char* str);
+char* arena_strdup(Arena* arena, const char* str) {
+    assert(arena != NULL && "arena_strdup called with NULL arena");
+    assert(str   != NULL && "arena_strdup called with NULL string");
+
+    size_t len = strlen(str) + 1; // +1 for null terminator
+    char* dup_str = (char*)arena_alloc(arena, len);
+    
+    if (dup_str) {
+        LOG_TRACE("arena_strdup: duplicating string of length %zu", len - 1);
+        memcpy(dup_str, str, len);
+    }
+
+    return dup_str;
+}
 
 /**
  * @brief Resets the arena for reuse.
@@ -104,7 +162,11 @@ char* arena_strdup(Arena* arena, const char* str);
  * 
  * @param[in] arena Pointer to the `Arena` to reset.
  */
-void arena_reset(Arena* arena);
+void arena_reset(Arena* arena) {
+    assert(arena != NULL && "arena_reset called with NULL arena");
+    
+    arena->offset = 0;
+}
 
 // =============================================================
 // Arena Getter Functions
@@ -117,7 +179,10 @@ void arena_reset(Arena* arena);
  * 
  * @return Used size of the arena in bytes.
  */
-size_t arena_get_used_size(Arena* arena);
+size_t arena_get_used_size(Arena* arena) {
+    assert(arena != NULL && "arena_get_used_size called with NULL arena");
+    return arena->offset;
+}
 
 /**
  * @brief Gets the available size of the arena.
@@ -126,7 +191,10 @@ size_t arena_get_used_size(Arena* arena);
  * 
  * @return Available size of the arena in bytes.
  */
-size_t arena_get_available_size(Arena* arena);
+size_t arena_get_available_size(Arena* arena) {
+    assert(arena != NULL && "arena_get_available_size called with NULL arena");
+    return arena->total_size - arena->offset;
+}
 
 /**
  * @brief Gets the total size of the arena.
@@ -135,4 +203,26 @@ size_t arena_get_available_size(Arena* arena);
  * 
  * @return Total size of the arena in bytes.
  */
-size_t arena_get_total_size(Arena* arena);
+size_t arena_get_total_size(Arena* arena) {
+    assert(arena != NULL && "arena_get_total_size called with NULL arena");
+    return arena->total_size;
+}
+
+/**
+ * @brief Displays the current state of the arena.
+ * 
+ * This function logs the used size, available size, and total size
+ * of the arena for debugging purposes.
+ * 
+ * @param[in] arena Pointer to the `Arena` to view.
+ */
+void arena_view(Arena* arena) {
+    assert(arena != NULL && "arena_view called with NULL arena");
+
+    size_t used = arena_get_used_size(arena);
+    size_t available = arena_get_available_size(arena);
+    size_t total = arena_get_total_size(arena);
+
+    LOG_DEBUG("Arena View: Used: %zu bytes, Available: %zu bytes, Total: %zu bytes",
+             used, available, total);
+}

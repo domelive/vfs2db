@@ -13,6 +13,7 @@ target_include_directories(syscall_handler
 target_link_libraries(syscall_handler
     PUBLIC
         logger
+        arena
         db_handler
     PRIVATE
         PkgConfig::FUSE3

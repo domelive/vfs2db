@@ -59,4 +59,6 @@
 #define BLOCK_SIZE          (256 * 1024)                  /**< Size of chunks for reading/writing operations */
 #define CACHE_BLOCKS        (CACHE_SIZE / BLOCK_SIZE)   /**< Number of blocks in the cache */
 
+#define ARENA_DEFAULT_SIZE  MB(1)                      /**< Default size for memory arenas */
+
 #endif // CONST_H

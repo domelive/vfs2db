@@ -60,7 +60,7 @@ FUSE driver to navigate an SQL database just like a filesystem.
             - `arena_create(size)` --> returns an arena object.
             - `arena_alloc(arena, size)` --> returns the pointer to the newly allocated memory.
                 - Be carefull with the alignment at the start.
-                - The next aligned addres is equal to: `(curr_addr + ARENA_ALIGN - 1) & ~(ARENA_ALIGN - 1)`. (To discuss, because i really do not understand this formula).
+                - The next aligned address is equal to: `(curr_addr + ARENA_ALIGN - 1) & ~(ARENA_ALIGN - 1)`. (To discuss, because i really do not understand this formula).
             - `arena_calloc(arena, count, size)` --> just like calloc, the memory allocated is also zeroed.
             - `arena_strdup(arena, string)` --> duplicates a string inside the arena.
             - `arena_reset(arena)` --> deallocates the entire used memory inside the arena in O(1).
