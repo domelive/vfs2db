@@ -280,6 +280,8 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
     
     memset(st, 0, sizeof(*st));
 
+    // /heavy_files/content.vfs2db
+
     // Check if directory --> doesn't finish with .vfs2db
     // path: test/ciao/1.vfs2db
     if (strncmp(&path[strlen(path) - 7], ".vfs2db", 7)) {
@@ -302,6 +304,12 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         if (!toks) {
             LOG_FUSE_EXIT("getattr", -ENOMEM);
             return -ENOMEM;
+        }
+
+        if (!toks->table || !toks->record || !toks->attribute) {
+            LOG_ERROR("getattr: incomplete path tokens for %s", path);
+            LOG_FUSE_EXIT("getattr", -ENOENT);
+            return -ENOENT;
         }
 
         // We need to check if it is a symlink
@@ -618,7 +626,7 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
  * @return Number of bytes written on success, negative error code on failure
  * 
  */
-int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
     (void)fi;
 
     LOG_FUSE_ENTER("write", path);
@@ -638,8 +646,8 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
         return -ENOMEM;
     }
     
-    int append = (offset == 0) ? 0 : 1;
-    if (update_attribute_value(toks, buffer, size, append) == STATUS_DB_ERROR) {
+    int append = offset != 0;
+    if (update_attribute_value(toks, buffer, size, append, offset) == STATUS_DB_ERROR) {
         LOG_ERROR("write: failed to update attribute");
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
@@ -648,8 +656,8 @@ int vfs2db_write(const char *path, const char *buffer, size_t size, off_t offset
     LOG_DEBUG("write: wrote %zu bytes at offset %ld (append=%d)", 
               size, offset, append);
     LOG_FUSE_EXIT("write", size);
-    
-    return size;
+ 
+    return (int)size;
 }
 
 /**

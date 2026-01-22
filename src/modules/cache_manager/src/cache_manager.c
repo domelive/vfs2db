@@ -202,14 +202,8 @@ void cache_evict() {
 
     CacheBlock* to_evict = cache.lru_tail;
 
-    LOG_DEBUG("Evicting block: path='%s', offset=%ld, dirty=%d",
-        to_evict->key.query, to_evict->key.offset, to_evict->is_dirty);
-
-    // TODO: if dirty, write back to DB
-    if (to_evict->is_dirty) {
-        LOG_WARN("Evicted block is dirty, write-back not implemented yet: path='%s', offset=%ld",
-            to_evict->key.query, to_evict->key.offset);
-    }
+    LOG_DEBUG("Evicting block: path='%s', offset=%ld",
+        to_evict->key.query, to_evict->key.offset);
 
     // Remove from hash map
     HASH_DEL(cache.map, to_evict);
@@ -228,6 +222,50 @@ void cache_evict() {
     free(to_evict);
 
     LOG_TRACE("Eviction complete. Total evictions: %lu", cache.evictions);
+}
+
+/**
+ * @brief Evicts a specific cache block from the cache based on the given key.
+ * 
+ * @param[in] key Pointer to the cache key of the block to evict.
+ * 
+ */
+void cache_evict_block(CacheKey* key) {
+    pthread_mutex_lock(&cache.lock);
+
+    CacheBlock* blk = NULL;
+    LOG_TRACE("Looking for block to evict: path='%s', offset=%ld",
+        key->query, key->offset);
+    HASH_FIND(hh, cache.map, key, sizeof(CacheKey), blk);
+    LOG_TRACE("Block lookup complete for eviction");
+    if (!blk) {
+        LOG_TRACE("No block found to evict for key: path='%s', offset=%ld",
+            key->query, key->offset);
+        pthread_mutex_unlock(&cache.lock);
+        return;
+    }
+
+    LOG_DEBUG("Evicting specific block: path='%s', offset=%ld",
+        blk->key.query, blk->key.offset);
+
+    cache.evictions++;
+
+    // Remove from hash map
+    HASH_DEL(cache.map, blk);
+
+    // Update LRU pointers
+    if (blk->prev) blk->prev->next = blk->next;
+    if (blk->next) blk->next->prev = blk->prev;
+    if (blk == cache.lru_head) cache.lru_head = blk->next;
+    if (blk == cache.lru_tail) cache.lru_tail = blk->prev;
+
+    LOG_TRACE("Before free");
+    // Free the evicted block
+    if (blk->data) free(blk->data);
+    free(blk);
+    LOG_TRACE("After free");
+
+    pthread_mutex_unlock(&cache.lock);
 }
 
 void cache_view() {
@@ -249,9 +287,9 @@ void cache_view() {
         CacheBlock* current = cache.lru_head;
         int idx = 0;
         while (current) {
-            LOG_TRACE("  [%d] query='%s', offset=%ld, size=%zu, dirty=%d",
+            LOG_TRACE("  [%d] query='%s', offset=%ld, size=%zu",
                       idx++, current->key.query, current->key.offset,
-                      current->actual_size, current->is_dirty);
+                      current->actual_size);
             current = current->next;
         }
     }

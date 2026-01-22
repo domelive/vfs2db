@@ -120,8 +120,14 @@ static inline int count_schemas(DbSchema* db_schema) {
  * 
  */
 static inline Fk* find_fk_by_name(Schema* schema, const char* from) {
+    if (!from) {
+        LOG_TRACE("find_fk_by_name: 'from' parameter is NULL");
+        return NULL;
+    }
+
     Fk* fk;
     HASH_FIND_STR(schema->fks_head, from, fk);
+
     return fk;
 }
 

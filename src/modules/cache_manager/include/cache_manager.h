@@ -59,8 +59,6 @@ typedef struct CacheKey{
  * 
  * - `actual_size`: The actual size of the data stored in this cache block.
  * 
- * - `is_dirty`:    Flag indicating whether the cache block has been modified (dirty) or not.
- * 
  * - `prev`:        Pointer to the previous cache block in the linked list.
  * 
  * - `next`:        Pointer to the next cache block in the linked list.
@@ -73,7 +71,6 @@ typedef struct CacheBlock {
 
     void*    data;
     size_t   actual_size;
-    int      is_dirty;
     
     struct CacheBlock* prev;
     struct CacheBlock* next;
@@ -112,6 +109,14 @@ void cache_touch(CacheBlock* blk);
  * 
  */
 void cache_evict();
+
+/**
+ * @brief Evicts a specific cache block from the cache based on the given key.
+ * 
+ * @param[in] key Pointer to the cache key of the block to evict.
+ * 
+ */
+void cache_evict_block(CacheKey* key);
 
 /**
  * @brief Retrieves a cache block from the cache based on the given key.

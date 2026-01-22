@@ -304,7 +304,6 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
     blk->key = *key;
     blk->data = strdup((char*)sqlite3_column_text(stmt, 0));
     blk->actual_size = (size_t)sqlite3_column_bytes(stmt, 0);
-    blk->is_dirty = 0;
 
     // free(key);  // Content copied to blk->key
 
@@ -381,9 +380,35 @@ status_t get_attribute_type(struct tokens *toks, int* type) {
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  * 
  */
-status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append) {
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append, off_t offset) {
     LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu, append=%d)",
               toks->table, toks->record, toks->attribute, size, append);
+
+    // // Align offset
+    // off_t block_offset = (offset / BLOCK_SIZE) * BLOCK_SIZE;
+
+    // // Rebuild the path from toks
+    // char path[MAX_SIZE];
+    // snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+    
+    // LOG_TRACE("Updating attribute bytes: path='%s', offset=%ld (block_offset=%ld)",
+    //           path, offset, block_offset);
+    // // Check if the block is in the cache, if so I evict it
+    // CacheKey* key = calloc(1, sizeof(CacheKey));
+    // if (!key) {
+    //     LOG_ERROR("Failed to allocate CacheKey");
+    //     return STATUS_DB_ERROR;
+    // }
+
+    // strncpy(key->query, path, strlen(path) + 1);
+    // key->offset = block_offset;
+    // LOG_TRACE("Evicting cache block if exists: path='%s', offset=%ld",
+    //           key->query, key->offset);
+
+    // cache_view();
+
+    // // evict that block, if exists
+    // cache_evict_block(key);
 
     sqlite3_stmt *stmt = (append == 0)
         ? qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table, toks->attribute)
@@ -414,6 +439,20 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
     int changes = sqlite3_changes(db);
     LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
+
+    // // Add the new modified block to the cache
+    // CacheBlock* blk = malloc(sizeof(CacheBlock));
+    // if (!blk) {
+    //     LOG_ERROR("Failed to allocate CacheBlock for updated attribute");
+    //     sqlite3_finalize(stmt);
+    //     return STATUS_DB_ERROR;
+    // }
+
+    // blk->key = *key;
+    // blk->data = strdup(buffer);  // Note: buffer should remain valid
+    // blk->actual_size = size;
+
+    // cache_add_block(blk);
     
     sqlite3_finalize(stmt);
     return STATUS_OK;
@@ -477,11 +516,11 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
         const char *rowid = (const char*) sqlite3_column_text(stmt, 0);
         records[record_count++] = strdup(rowid);
 
-        // if (record_count >= MAX_SIZE) {
-        //     LOG_WARN("Table '%s' has more than %d rows, truncating", 
-        //              table, MAX_SIZE);
-        //     break;
-        // }
+        if (record_count >= MAX_SIZE) {
+            LOG_WARN("Table '%s' has more than %d rows, truncating", 
+                     table, MAX_SIZE);
+            break;
+        }
     }
 
     *n_records = record_count;
@@ -512,7 +551,6 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     blk->key = *key;
     blk->data = records_copy;
     blk->actual_size = record_count;
-    blk->is_dirty = 0;
     
     // free(key);  // Content copied to blk->key
     cache_add_block(blk);
