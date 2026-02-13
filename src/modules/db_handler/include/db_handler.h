@@ -51,7 +51,7 @@ status_t init_schema(Schema* schema);
 status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes);
 status_t get_attribute_size(struct tokens* toks, size_t* size);
 status_t get_attribute_type(struct tokens* toks, int* type);
-status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append, off_t offset);
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset, size_t attr_size);
 status_t get_table_rowids(const char* table, char* records[], int* n_records);
 status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks, int* row_id);
 

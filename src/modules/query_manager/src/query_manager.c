@@ -109,17 +109,6 @@ static query_t query_store[] = {
         NULL
     },
 
-    [QUERY_TPL_UPDATE_ATTRIBUTE_APPEND] = {
-        "UPDATE "
-            "%s "
-        "SET "
-            "%s = \"%s\" || ? "
-        "WHERE "
-            "rowid = ?",
-        1,
-        NULL
-    },
-
     [QUERY_TPL_SELECT_TABLE_ROWIDS] = {
         "SELECT "
             "rowid "

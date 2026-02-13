@@ -138,7 +138,7 @@ int main(int argc, char *argv[]) {
         LOG_TRACE("  argv[%d]: %s", i, args.argv[i]);
     }
 
-    int res = fuse_main(args.argc, args.argv, &vfs2db_oper, NULL);
+    int res = fuse_main(args.argc, args.argv, &vfs2db_oper, opt.db_path);
 
     LOG_INFO("FUSE main loop has exited with code: %d", res);
     LOG_INFO("Unmounting FUSE filesystem...");

@@ -380,81 +380,127 @@ status_t get_attribute_type(struct tokens *toks, int* type) {
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  * 
  */
-status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, int append, off_t offset) {
-    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu, append=%d)",
-              toks->table, toks->record, toks->attribute, size, append);
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset, size_t attr_size) {
+    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu)",
+              toks->table, toks->record, toks->attribute, size);
 
-    // // Align offset
-    // off_t block_offset = (offset / BLOCK_SIZE) * BLOCK_SIZE;
+    // Align offset
+    off_t block_offset = (offset / BLOCK_SIZE) * BLOCK_SIZE;
 
-    // // Rebuild the path from toks
-    // char path[MAX_SIZE];
-    // snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+    // Rebuild the path from toks
+    char path[MAX_SIZE];
+    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
     
-    // LOG_TRACE("Updating attribute bytes: path='%s', offset=%ld (block_offset=%ld)",
-    //           path, offset, block_offset);
-    // // Check if the block is in the cache, if so I evict it
-    // CacheKey* key = calloc(1, sizeof(CacheKey));
-    // if (!key) {
-    //     LOG_ERROR("Failed to allocate CacheKey");
-    //     return STATUS_DB_ERROR;
-    // }
+    LOG_TRACE("Updating attribute bytes: path='%s', offset=%ld (block_offset=%ld)",
+              path, offset, block_offset);
+    // Check if the block is in the cache, if so I evict it
+    CacheKey* key = calloc(1, sizeof(CacheKey));
+    if (!key) {
+        LOG_ERROR("Failed to allocate CacheKey");
+        return STATUS_DB_ERROR;
+    }
 
-    // strncpy(key->query, path, strlen(path) + 1);
-    // key->offset = block_offset;
-    // LOG_TRACE("Evicting cache block if exists: path='%s', offset=%ld",
-    //           key->query, key->offset);
+    strncpy(key->query, path, strlen(path) + 1);
+    key->offset = block_offset;
+    LOG_TRACE("Evicting cache block if exists: path='%s', offset=%ld",
+              key->query, key->offset);
 
-    // cache_view();
+    cache_view();
 
-    // // evict that block, if exists
-    // cache_evict_block(key);
+    // evict that block, if exists
+    cache_evict_block(key);
 
-    sqlite3_stmt *stmt = (append == 0)
-        ? qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table, toks->attribute)
-        : qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE_APPEND, toks->table, toks->attribute);
 
+    // READ
+    LOG_TRACE("READ phase");
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE, toks->attribute, toks->table);
     if (!stmt) {
-        LOG_ERROR("Failed to build UPDATE query");
+        LOG_ERROR("Failed to build SELECT query for update");
         return STATUS_DB_ERROR;
     }
 
-    if (sqlite3_bind_text(stmt, 1, buffer, (int)size, SQLITE_TRANSIENT) != SQLITE_OK) {
+    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
         LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
         return STATUS_DB_ERROR;
     }
 
-    if (sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        LOG_ERROR("No row found for update query");
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
+    const void* blob = sqlite3_column_blob(stmt, 0);
+    if (!blob) {
+        LOG_ERROR("Failed to retrieve existing attribute value for update");
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
+    size_t data_size = (offset + size > attr_size) ? offset + size : attr_size;
+    LOG_TRACE("Current attribute size: %zu bytes, new data size after update: %zu bytes", attr_size, data_size);
+    void* data = calloc(1, data_size);
+    if (data) {
+        LOG_TRACE("Existing attribute value found, copying to new buffer");
+        memcpy(data, blob, data_size);
+    }
+
+    // PATCH
+    LOG_TRACE("PATCH phase");
+    memcpy((char*)data + offset, buffer, size);
+    sqlite3_finalize(stmt);
+
+    // WRITE
+    LOG_TRACE("WRITE phase");
+    stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table, toks->attribute);
+    if (!stmt) {
+        LOG_ERROR("Failed to build UPDATE query for attribute");
+        free(data);
+        return STATUS_DB_ERROR;
+    }
+
+    if (sqlite3_bind_blob(stmt, 1, data, data_size, SQLITE_STATIC) != SQLITE_OK) {
         LOG_SQLITE_ERROR(db);
         sqlite3_finalize(stmt);
+        free(data);
+        return STATUS_DB_ERROR;
+    }
+
+    if (sqlite3_bind_int64(stmt, 2, atoi(toks->record)) != SQLITE_OK) {
+        LOG_SQLITE_ERROR(db);
+        sqlite3_finalize(stmt);
+        free(data);
         return STATUS_DB_ERROR;
     }
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
-        LOG_SQLITE_ERROR(db);
+        LOG_ERROR("Failed to execute UPDATE query for attribute");
         sqlite3_finalize(stmt);
+        free(data);
         return STATUS_DB_ERROR;
     }
 
     int changes = sqlite3_changes(db);
     LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
-
-    // // Add the new modified block to the cache
-    // CacheBlock* blk = malloc(sizeof(CacheBlock));
-    // if (!blk) {
-    //     LOG_ERROR("Failed to allocate CacheBlock for updated attribute");
-    //     sqlite3_finalize(stmt);
-    //     return STATUS_DB_ERROR;
-    // }
-
-    // blk->key = *key;
-    // blk->data = strdup(buffer);  // Note: buffer should remain valid
-    // blk->actual_size = size;
-
-    // cache_add_block(blk);
-    
     sqlite3_finalize(stmt);
+
+    // Add the new modified block to the cache
+    CacheBlock* blk = malloc(sizeof(CacheBlock));
+    if (!blk) {
+        LOG_ERROR("Failed to allocate CacheBlock for updated attribute");
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
+    blk->key = *key;
+    blk->data = strdup(data);  // Note: buffer should remain valid
+    blk->actual_size = data_size;
+    
+    cache_add_block(blk);
+
+    free(data);
+    
     return STATUS_OK;
 }
 

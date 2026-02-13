@@ -166,6 +166,12 @@ static inline int check_symlink(struct tokens* toks) {
 void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     LOG_INFO("Initializing VFS2DB filesystem...");
 
+    const char* db_path = (const char*) fuse_get_context()->private_data;
+    if (!db_path) {
+        LOG_FATAL("Database path not provided in FUSE private data");
+        return NULL;
+    }
+
     // Initialize Query Manager
     if (qm_init(db) != STATUS_OK) {
         LOG_FATAL("Failed to initialize Query Manager");
@@ -179,6 +185,10 @@ void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
         return NULL;
     }
     
+    char* db_name = strdup(db_path);
+    db_name[strlen(db_path) - 3] = 0;
+    db_name += 3;
+    db_schema->db_name = db_name;
     if (init_db_schema(db_schema) != STATUS_OK) {
         LOG_FATAL("Failed to initialize database schema");
         free(db_schema);
@@ -285,6 +295,11 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
     // Check if directory --> doesn't finish with .vfs2db
     // path: test/ciao/1.vfs2db
     if (strncmp(&path[strlen(path) - 7], ".vfs2db", 7)) {
+        if (strstr(path, ".Trash") != NULL) {
+            LOG_TRACE("The system asked for .Trash-xxxx directory");
+            return -ENOENT;
+        }
+
         st->st_mode = S_IFDIR | 0755;
         st->st_nlink = 2;
         st->st_uid = getuid();
@@ -645,16 +660,23 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
         LOG_FUSE_EXIT("write", -ENOMEM);
         return -ENOMEM;
     }
+
+    // Get attribute size
+    size_t attr_size;
+    if (get_attribute_size(toks, &attr_size) == STATUS_DB_ERROR) {
+        LOG_ERROR("write: failed to get attribute size");
+        LOG_FUSE_EXIT("write", -EIO);
+        return -EIO;
+    }
     
-    int append = offset != 0;
-    if (update_attribute_value(toks, buffer, size, append, offset) == STATUS_DB_ERROR) {
+    if (update_attribute_value(toks, buffer, size, offset, attr_size) == STATUS_DB_ERROR) {
         LOG_ERROR("write: failed to update attribute");
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
     }
 
-    LOG_DEBUG("write: wrote %zu bytes at offset %ld (append=%d)", 
-              size, offset, append);
+    LOG_DEBUG("write: wrote %zu bytes at offset %ld)", 
+              size, offset);
     LOG_FUSE_EXIT("write", size);
  
     return (int)size;

@@ -21,6 +21,10 @@ FUSE driver to navigate an SQL database just like a filesystem.
         - Maybe it's best to transform it's implementation in an header only library? 
     - [ ] ns-programming
     - [ ] general fixes
+        - Modify cache_add_block to check if block dimension is too big.
+            - If too big we can return an error or, better, we can make it add more blocks.
+        - Check if everything becomes an actual blob in the database.
+        - Macro for ifs.
         - Code styles are not defined.
         - Errors are handled inconsistently. Some functions return `-1` some `status_t`.
         - Memory leaks.
@@ -35,7 +39,7 @@ FUSE driver to navigate an SQL database just like a filesystem.
             - If we implement this struct we should retrieve it every time we do a FUSE operation.
                 - We could pass it inside the `fuse_main` function like `user_data`.
                 - `struct fuse_context* fc = fuse_get_context();` | `\n` | `VfsContext* ctx = (VfsContext*)fc->private_data;`. (Those are multiple lines of code...)
-- [ ] optimizations
+- [x] optimizations
     - [x] cache to save query result for multiple reads and writes of the same file
         - Make it limitless (for the rowid query)
         - ~~Add metrics like hits, misses and evictions~~.
@@ -48,7 +52,7 @@ FUSE driver to navigate an SQL database just like a filesystem.
                     - Must be stack allocated.
                 - Then we add a pointer `free_list` which represents the free blocks list.
             - This way there are no more `free()` because everything, except the actual buffer, is handled by the pool allocator.
-    - [ ] memory arena
+    - [x] memory arena
         - Needs to be used for every FUSE operation.
             - We allocate small things and then we call reset to free the memory and leave it for the next operation.
         - Needs to be thread local because FUSE can be multi-threaded.
