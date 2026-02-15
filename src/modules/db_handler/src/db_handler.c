@@ -23,6 +23,8 @@
 
 #include "db_handler.h"
 
+#define BLOCK_OFFSET(offset) ((off_t)((offset / BLOCK_SIZE) * BLOCK_SIZE))
+
 static inline int parse_sqlite_type(const char* typestr) {
     LOG_TRACE("Parsing SQLITE type...");
 
@@ -54,6 +56,26 @@ static inline int parse_sqlite_type(const char* typestr) {
     LOG_TRACE("Fallback to SQLITE_TEXT");
 
     return SQLITE_TEXT;
+}
+
+static inline status_t get_cache_key_from_toks(struct tokens* toks, off_t block_offset, CacheKey** key) {
+    // Rebuild the path from toks
+    char path[MAX_SIZE];
+    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    LOG_TRACE("Getting attribute bytes: path='%s', block_offset=%ld", path,
+              block_offset);
+
+    *key = calloc(1, sizeof(CacheKey));
+    if (!(*key)) {
+        LOG_ERROR("Failed to allocate CacheKey");
+        return STATUS_DB_ERROR;
+    }
+
+    strncpy((*key)->query, path, strlen(path) + 1);
+    (*key)->offset = block_offset;
+
+    return STATUS_OK;
 }
 
 /**
@@ -273,41 +295,30 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
-    // Align offset
-    off_t block_offset = (offset / BLOCK_SIZE) * BLOCK_SIZE;
+status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes) {
+    CacheKey* key = NULL;
+    if (cache_enabled) {
+        if (get_cache_key_from_toks(toks, BLOCK_OFFSET(offset), &key) != STATUS_OK) {
+            LOG_ERROR("Failed to get cache key from tokens");
+            return STATUS_CACHE_ERROR;
+        }
 
-    // Rebuild the path from toks
-    char path[MAX_SIZE];
-    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+        CacheBlock* blk;
+        // CACHE HIT
+        if ((blk = cache_get(key)) != NULL) {
+            LOG_DEBUG("Cache hit for '%s' at offset %ld", key->query, key->offset);
+            *bytes = (char*)blk->data;
+            return STATUS_OK;
+        }
 
-    LOG_TRACE("Getting attribute bytes: path='%s', offset=%ld (block_offset=%ld)", path, offset,
-              block_offset);
-
-    CacheKey* key = calloc(1, sizeof(CacheKey));
-    if (!key) {
-        LOG_ERROR("Failed to allocate CacheKey");
-        return STATUS_DB_ERROR;
+        // CACHE MISS
+        LOG_DEBUG("Cache miss for '%s' at offset %ld, fetching from DB", key->query, key->offset);
     }
-
-    strncpy(key->query, path, strlen(path) + 1);
-    key->offset = block_offset;
-
-    CacheBlock* blk;
-    // CACHE HIT
-    if ((blk = cache_get(key)) != NULL) {
-        LOG_DEBUG("Cache hit for '%s' at offset %ld", path, block_offset);
-        *bytes = (char*)blk->data;
-        return STATUS_OK;
-    }
-
-    // CACHE MISS
-    LOG_DEBUG("Cache miss for '%s' at offset %ld, fetching from DB", path, block_offset);
 
     // Build the statement
     sqlite3_stmt* stmt =
         qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE, toks->attribute,
-                                         block_offset, BLOCK_SIZE, toks->table);
+                                         BLOCK_OFFSET(offset), BLOCK_SIZE, toks->table);
     if (!stmt) {
         LOG_ERROR("Failed to build chunk query");
         free(key);
@@ -328,28 +339,64 @@ status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes) {
         return STATUS_DB_ERROR;
     }
 
-    blk = malloc(sizeof(CacheBlock));
-    if (!blk) {
-        LOG_ERROR("Failed to allocate CacheBlock");
-        sqlite3_finalize(stmt);
-        free(key);
-        return STATUS_DB_ERROR;
-    }
-    blk->key         = *key;
-    blk->data        = strdup((char*)sqlite3_column_text(stmt, 0));
-    blk->actual_size = (size_t)sqlite3_column_bytes(stmt, 0);
-
-    // free(key);  // Content copied to blk->key
-
-    cache_add_block(blk);
-
-    LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
+    const char* data = strdup((char*)sqlite3_column_text(stmt, 0));
+    const size_t data_size = (size_t)sqlite3_column_bytes(stmt, 0);
 
     // Calculate relative offset
-    size_t relative_offset = offset - block_offset;
-    *bytes                 = blk->data + relative_offset;
+    size_t relative_offset = offset - BLOCK_OFFSET(offset);
+    *bytes                 = data + relative_offset;
 
-    cache_view();
+    if (cache_enabled) {
+        CacheBlock* blk = malloc(sizeof(CacheBlock));
+        if (!blk) {
+            LOG_ERROR("Failed to allocate CacheBlock");
+            sqlite3_finalize(stmt);
+            free(key);
+            return STATUS_DB_ERROR;
+        }
+        blk->key         = *key;
+        blk->data        = data;
+        blk->actual_size = data_size;
+
+        cache_add_block(blk);
+        LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
+
+        free(key);  // Content copied to blk->key
+        cache_view();
+    }
+
+    sqlite3_finalize(stmt);
+    return STATUS_OK;
+}
+
+status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
+    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+                                                          toks->attribute, toks->table);
+    if (!stmt) {
+        LOG_ERROR("Failed to build SELECT query for update");
+        return STATUS_DB_ERROR;
+    }
+
+    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        LOG_SQLITE_ERROR(db);
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        LOG_ERROR("No row found for update query");
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
+
+    *bytes = strdup((char*)sqlite3_column_text(stmt, 0));
+    *size = (size_t) sqlite3_column_bytes(stmt, 0);
+
+    if (!bytes) {
+        LOG_ERROR("Failed to retrieve existing attribute value for update");
+        sqlite3_finalize(stmt);
+        return STATUS_DB_ERROR;
+    }
 
     sqlite3_finalize(stmt);
     return STATUS_OK;
@@ -393,181 +440,188 @@ status_t get_attribute_type(struct tokens* toks, int* type) {
     return STATUS_OK;
 }
 
-/**
- * Update Attribute Value
- * @todo Handle error cases properly
- *
- * @brief Updates the value of a specific attribute for a given record in a table.
- *
- * This function executes a SQL `UPDATE` statement to modify the attribute value.
- * It supports both overwriting the existing value and appending to it.
- *
- * @param[in] toks   Pointer to tokens structure containing table, record, and attribute
- * information
- * @param[in] buffer Pointer to the new value to set
- * @param[in] size   Size of the new value
- * @param[in] append If non-zero, appends the new value to the existing value; otherwise,
- * overwrites it
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
-status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset,
-                                size_t attr_size) {
-    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu)", toks->table, toks->record, toks->attribute,
-              size);
-
-    // READ
-    LOG_TRACE("READ phase");
-    sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
-                                                          toks->attribute, toks->table);
-    if (!stmt) {
-        LOG_ERROR("Failed to build SELECT query for update");
-        return STATUS_DB_ERROR;
-    }
-
-    if (sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-        LOG_SQLITE_ERROR(db);
-        sqlite3_finalize(stmt);
-        return STATUS_DB_ERROR;
-    }
-
-    if (sqlite3_step(stmt) != SQLITE_ROW) {
-        LOG_ERROR("No row found for update query");
-        sqlite3_finalize(stmt);
-        return STATUS_DB_ERROR;
-    }
-
-    const void* blob = sqlite3_column_blob(stmt, 0);
-    if (!blob) {
-        LOG_ERROR("Failed to retrieve existing attribute value for update");
-        sqlite3_finalize(stmt);
-        return STATUS_DB_ERROR;
-    }
-
-    size_t data_size = (offset + size > attr_size) ? offset + size : attr_size;
-    LOG_TRACE("Current attribute size: %zu bytes, new data size after update: %zu bytes", attr_size,
-              data_size);
-    void* data = calloc(1, data_size);
-    if (data) {
-        LOG_TRACE("Existing attribute value found, copying to new buffer");
-        memcpy(data, blob, data_size);
-    }
-
-    // PATCH
-    LOG_TRACE("PATCH phase");
-    memcpy((char*)data + offset, buffer, size);
-    // 56.2434223
-    // 57.2434223
-    sqlite3_finalize(stmt);
-
-    // WRITE
-    LOG_TRACE("WRITE phase");
-    stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table,
-                                            toks->attribute);
-    if (!stmt) {
-        LOG_ERROR("Failed to build UPDATE query for attribute");
-        free(data);
-        return STATUS_DB_ERROR;
-    }
-
-    int type;
-    if (get_attribute_type(toks, &type) != STATUS_OK) {
-        LOG_ERROR("Failed to get attribute type for update");
-        sqlite3_finalize(stmt);
-        free(data);
-        return STATUS_DB_ERROR;
-    }
-
-    const char* data_str = (char*)data;
+static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int type) {
     switch (type) {
     case SQLITE_INTEGER: {
-        LOG_TRACE("Binding integer data for update: '%s'", data_str);
-        sqlite3_int64 value = strtoll(data_str, NULL, 10);
-        if (sqlite3_bind_int64(stmt, 1, value) != SQLITE_OK) {
+        sqlite3_int64 val = strtoll(value, NULL, 10);
+        if (sqlite3_bind_int64(stmt, 1, val) != SQLITE_OK) {
             LOG_SQLITE_ERROR(db);
-            sqlite3_finalize(stmt);
-            free(data);
             return STATUS_DB_ERROR;
         }
         break;
     }
     case SQLITE_FLOAT: {
-        LOG_TRACE("Binding float data for update: '%s'", data_str);
-        double value = strtod(data_str, NULL);
-        LOG_TRACE("Value: %f", value);
-        if (sqlite3_bind_double(stmt, 1, value) != SQLITE_OK) {
+        double val = strtod(value, NULL);
+        if (sqlite3_bind_double(stmt, 1, val) != SQLITE_OK) {
             LOG_SQLITE_ERROR(db);
-            sqlite3_finalize(stmt);
-            free(data);
             return STATUS_DB_ERROR;
         }
         break;
     }
     case SQLITE_TEXT: {
-        LOG_TRACE("Binding text data for update: '%s'", data_str);
-        if (sqlite3_bind_text(stmt, 1, data_str, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        if (sqlite3_bind_text(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
             LOG_SQLITE_ERROR(db);
-            sqlite3_finalize(stmt);
-            free(data);
             return STATUS_DB_ERROR;
         }
         break;
     }
     case SQLITE_BLOB:
     default: {
-        LOG_TRACE("Binding blob data for update, size: %zu bytes", data_size);
-        if (sqlite3_bind_blob(stmt, 1, data, data_size, SQLITE_STATIC) != SQLITE_OK) {
+        if (sqlite3_bind_blob(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
             LOG_SQLITE_ERROR(db);
-            sqlite3_finalize(stmt);
-            free(data);
             return STATUS_DB_ERROR;
         }
         break;
     }
     }
+}
 
-    if (sqlite3_bind_int64(stmt, 2, atoi(toks->record)) != SQLITE_OK) {
-        LOG_SQLITE_ERROR(db);
+/**
+ * Update Attribute Value
+ */
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset) {
+    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu)", toks->table, toks->record, toks->attribute,
+              size);
+    
+    // Check type
+    int type;
+    if (get_attribute_type(toks, &type) != STATUS_OK) {
+        LOG_ERROR("Failed to get attribute type for update");
+        return STATUS_DB_ERROR;
+    }
+
+    if (type == SQLITE_TEXT || type == SQLITE_BLOB) {
+        // Get current attribute size
+        size_t current_size;
+        if (get_attribute_size(toks, &current_size) != STATUS_OK) {
+            LOG_ERROR("Failed to get attribute size for blob/text update");
+            return STATUS_DB_ERROR;
+        }
+
+        size_t end_of_write = offset + size;
+
+        // If we need to expand, extend the blob in-place using SQL concatenation
+        // with zeroblob --> no full copy into RAM
+        if (end_of_write > current_size) {
+            size_t expand_by = end_of_write - current_size;
+            LOG_DEBUG("Expanding blob by %zu bytes (current=%zu, needed=%zu)",
+                      expand_by, current_size, end_of_write);
+
+            sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ZERO_BLOB,
+                                                                  toks->table, toks->attribute,
+                                                                  toks->attribute);
+
+            if (sqlite3_bind_int(stmt, 1, (int)expand_by) != SQLITE_OK) {
+                LOG_SQLITE_ERROR(db);
+                sqlite3_finalize(stmt);
+                return STATUS_DB_ERROR;
+            }
+
+            if (sqlite3_bind_int64(stmt, 2, atoi(toks->record)) != SQLITE_OK) {
+                LOG_SQLITE_ERROR(db);
+                sqlite3_finalize(stmt);
+                return STATUS_DB_ERROR;
+            }
+
+            if (sqlite3_step(stmt) != SQLITE_DONE) {
+                LOG_ERROR("Failed to expand blob: %s", sqlite3_errmsg(db));
+                sqlite3_finalize(stmt);
+                return STATUS_DB_ERROR;
+            }
+
+            sqlite3_finalize(stmt);
+            LOG_DEBUG("Blob expanded successfully to %zu bytes", end_of_write);
+        }
+
+        // Now write the data in-place using the Blob I/O API
+        sqlite3_blob* blob_handle = NULL;
+        if (sqlite3_blob_open(db, "main", toks->table, toks->attribute, atoll(toks->record), 1, &blob_handle) != SQLITE_OK) {
+            LOG_ERROR("Failed to open blob handle: %s", sqlite3_errmsg(db));
+            return STATUS_DB_ERROR;
+        }
+
+        if (sqlite3_blob_write(blob_handle, buffer, (int)size, (int)offset) != SQLITE_OK) {
+            LOG_ERROR("Failed to write to blob: %s", sqlite3_errmsg(db));
+            sqlite3_blob_close(blob_handle);
+            return STATUS_DB_ERROR;
+        }
+
+        LOG_DEBUG("Blob updated in-place via Blob I/O (offset=%ld, size=%zu)", offset, size);
+        sqlite3_blob_close(blob_handle);
+    } else {
+        // Read all the attribute bytes
+        char* bytes;
+        size_t bytes_size;
+        if (get_attribute_all_bytes(toks, &bytes, &bytes_size) != STATUS_OK) {
+            LOG_ERROR("Failed to get all bytes for attribute update");
+            return STATUS_DB_ERROR;
+        }
+
+        // Calculate new size after update
+        size_t new_bytes_size = (offset + size > bytes_size) ? offset + size : bytes_size;
+        LOG_TRACE("Current attribute, new data size after update: %zu bytes", new_bytes_size);
+
+        // Allocate new buffer for the updated attribute value
+        char* new_bytes = calloc(1, new_bytes_size);
+        if (!new_bytes) {
+            LOG_ERROR("Failed to allocate memory for new attribute bytes");
+            free(bytes);
+            return STATUS_DB_ERROR;
+        }
+        
+        // Copy existing bytes and patch with new data
+        memcpy(new_bytes, bytes, bytes_size);
+        memcpy(new_bytes + offset, buffer, size);
+
+        // Write the new attribute bytes
+        sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table,
+                                                toks->attribute);
+        if (!stmt) {
+            LOG_ERROR("Failed to build UPDATE query for attribute");
+            free(new_bytes);
+            return STATUS_DB_ERROR;
+        }
+
+        // Bind the new value based on its SQLite type
+        if (bind_attribute_value(stmt, new_bytes, type) != STATUS_OK) {
+            LOG_ERROR("Failed to bind new attribute value for update");
+            sqlite3_finalize(stmt);
+            free(new_bytes);
+            return STATUS_DB_ERROR;
+        }
+
+        // Bind the record ID for the WHERE clause
+        if (sqlite3_bind_int64(stmt, 2, atoi(toks->record)) != SQLITE_OK) {
+            LOG_SQLITE_ERROR(db);
+            sqlite3_finalize(stmt);
+            free(new_bytes);
+            return STATUS_DB_ERROR;
+        }
+
+        // Execute the UPDATE statement
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("Failed to execute UPDATE query for attribute");
+            sqlite3_finalize(stmt);
+            free(new_bytes);
+            return STATUS_DB_ERROR;
+        }
+
+        int changes = sqlite3_changes(db);
+        LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
         sqlite3_finalize(stmt);
-        free(data);
-        return STATUS_DB_ERROR;
     }
 
-    if (sqlite3_step(stmt) != SQLITE_DONE) {
-        LOG_ERROR("Failed to execute UPDATE query for attribute");
-        sqlite3_finalize(stmt);
-        free(data);
-        return STATUS_DB_ERROR;
+    if (cache_enabled) {
+        // Remove ALL blocks with key that has path = rebuilt path
+        CacheKey* key = NULL;
+        if (get_cache_key_from_toks(toks, 0, &key) != STATUS_OK) {
+            LOG_ERROR("Failed to get cache key from tokens for eviction");
+            return STATUS_CACHE_ERROR;
+        }
+        LOG_TRACE("Evicting cache blocks for updated attribute: path='%s'", key->query);
+        cache_evict_blocks_by_path(key->query);
+        free(key);
     }
-
-    int changes = sqlite3_changes(db);
-    LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
-    sqlite3_finalize(stmt);
-
-    // Align offset
-    off_t block_offset = (offset / BLOCK_SIZE) * BLOCK_SIZE;
-
-    // Rebuild the path from toks
-    char path[MAX_SIZE];
-    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
-
-    LOG_TRACE("Updating attribute bytes: path='%s', offset=%ld (block_offset=%ld)", path, offset,
-              block_offset);
-    // Check if the block is in the cache, if so I evict it
-    CacheKey* key = calloc(1, sizeof(CacheKey));
-    if (!key) {
-        LOG_ERROR("Failed to allocate CacheKey");
-        return STATUS_DB_ERROR;
-    }
-
-    strncpy(key->query, path, strlen(path) + 1);
-    key->offset = block_offset;
-    LOG_TRACE("Evicting cache block if exists: path='%s', offset=%ld", key->query, key->offset);
-
-    cache_view();
-
-    // evict that block, if exists
-    cache_evict_block(key);
 
     return STATUS_OK;
 }
@@ -618,22 +672,17 @@ status_t set_attribute_null(struct tokens* toks) {
     LOG_DEBUG("Attribute set to NULL successfully, %d rows affected", changes);
     sqlite3_finalize(stmt);
 
-    // Evict the corresponding cache block, if exists
-    CacheKey* key = calloc(1, sizeof(CacheKey));
-    if (!key) {
-        LOG_ERROR("Failed to allocate CacheKey for eviction");
-        return STATUS_DB_ERROR;
+    if (cache_enabled) {
+        // Evict the corresponding cache blocks, if exists
+        CacheKey* key = NULL;
+        if (get_cache_key_from_toks(toks, 0, &key) != STATUS_OK) {
+            LOG_ERROR("Failed to get cache key from tokens for eviction");
+            return STATUS_CACHE_ERROR;
+        }
+        LOG_TRACE("Evicting cache blocks for NULLified attribute: path='%s'", key->query);
+        cache_evict_blocks_by_path(key->query);
+        free(key);
     }
-
-    char path[MAX_SIZE];
-    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
-    strncpy(key->query, path, strlen(path) + 1);
-    key->offset = 0;
-    
-    LOG_TRACE("Evicting cache block for NULLified attribute: path='%s', offset=%ld", key->query,
-              key->offset);
-    cache_evict_block(key);
-    free(key);
 
     return STATUS_OK;
 }
@@ -652,35 +701,38 @@ status_t set_attribute_null(struct tokens* toks) {
 status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     LOG_TRACE("Getting row IDs for table: %s", table);
 
-    // Rebuild the path from toks
-    char path[MAX_SIZE];
-    snprintf(path, MAX_SIZE, "/%s", table);
+    CacheKey* key = NULL;
+    if (cache_enabled) {
+        struct tokens toks = {
+            .table = table,
+            .attribute = "",
+            .record = ""
+        };
 
-    CacheKey* key = calloc(1, sizeof(CacheKey));
-    if (!key) {
-        LOG_ERROR("Failed to allocate CacheKey");
-        return STATUS_DB_ERROR;
-    }
-
-    strncpy(key->query, path, strlen(path) + 1);
-    key->offset = 0; // VERY BIG ASSUMPTION
-
-    // cache hit
-    CacheBlock* blk;
-    if ((blk = cache_get(key)) != NULL) {
-        LOG_DEBUG("Cache hit for table rowids: %s", table);
-        *n_records = blk->actual_size;
-
-        char** cached_records = (char**)blk->data;
-        for (int i = 0; i < *n_records; i++) {
-            records[i] = cached_records[i];
+        // VERY BIG ASSUMPTION ON BLOCK_OFFSET=0
+        if (get_cache_key_from_toks(&toks, 0, &key) != STATUS_OK) {
+            LOG_ERROR("Failed to get cache key from tokens for rowids");
+            return STATUS_CACHE_ERROR;
         }
 
-        return STATUS_OK;
-    }
 
-    // cache miss
-    LOG_DEBUG("Cache miss for table rowids: %s", table);
+        // CACHE HIT
+        CacheBlock* blk;
+        if ((blk = cache_get(key)) != NULL) {
+            LOG_DEBUG("Cache hit for table rowids: %s", table);
+            *n_records = blk->actual_size;
+
+            char** cached_records = (char**)blk->data;
+            for (int i = 0; i < *n_records; i++) {
+                records[i] = cached_records[i];
+            }
+
+            return STATUS_OK;
+        }
+
+        // CACHE MISS
+        LOG_DEBUG("Cache miss for table rowids: %s", table);
+    }
 
     sqlite3_stmt* stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_ROWIDS, table);
 
@@ -705,35 +757,37 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     LOG_DEBUG("Found %d rows in table '%s'", record_count, table);
 
     // populate cache
-    blk = malloc(sizeof(CacheBlock));
-    if (!blk) {
-        LOG_WARN("Failed to allocate cache block for rowids, continuing without cache");
-        free(key);
-        sqlite3_finalize(stmt);
-        return STATUS_OK; // Non-fatal, we have the data
+    if (cache_enabled) {
+        CacheBlock* blk = malloc(sizeof(CacheBlock));
+        if (!blk) {
+            LOG_WARN("Failed to allocate cache block for rowids, continuing without cache");
+            free(key);
+            sqlite3_finalize(stmt);
+            return STATUS_OK; // Non-fatal, we have the data
+        }
+
+        char** records_copy = malloc(record_count * sizeof(char*));
+        if (!records_copy) {
+            LOG_WARN("Failed to allocate records copy for cache");
+            free(blk);
+            free(key);
+            sqlite3_finalize(stmt);
+            return STATUS_OK;
+        }
+
+        for (int i = 0; i < record_count; i++) {
+            records_copy[i] = strdup(records[i]);
+        }
+
+        blk->key         = *key;
+        blk->data        = records_copy;
+        blk->actual_size = record_count;
+
+        free(key);  // Content copied to blk->key
+        cache_add_block(blk);
+
+        cache_view();
     }
-
-    char** records_copy = malloc(record_count * sizeof(char*));
-    if (!records_copy) {
-        LOG_WARN("Failed to allocate records copy for cache");
-        free(blk);
-        free(key);
-        sqlite3_finalize(stmt);
-        return STATUS_OK;
-    }
-
-    for (int i = 0; i < record_count; i++) {
-        records_copy[i] = strdup(records[i]);
-    }
-
-    blk->key         = *key;
-    blk->data        = records_copy;
-    blk->actual_size = record_count;
-
-    // free(key);  // Content copied to blk->key
-    cache_add_block(blk);
-
-    // cache_view();
 
     sqlite3_finalize(stmt);
     return STATUS_OK;

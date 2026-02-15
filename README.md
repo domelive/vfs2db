@@ -23,9 +23,9 @@ FUSE driver to navigate an SQL database just like a filesystem.
     - [ ] general fixes
         - Modify cache_add_block to check if block dimension is too big.
             - If too big we can return an error or, better, we can make it add more blocks.
-        - Check if everything becomes an actual blob in the database.
-        - Macro for ifs.
-        - Code styles are not defined.
+        - ~~Check if everything becomes an actual blob in the database~~.
+        - Macro for ifs
+        - ~~Code styles are not defined~~.
         - Errors are handled inconsistently. Some functions return `-1` some `status_t`.
         - Memory leaks.
         - Defining constants for magic numbers.

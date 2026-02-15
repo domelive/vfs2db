@@ -612,7 +612,7 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     }
 
     // Let's use the cache
-    if (get_attribute_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
+    if (get_attribute_chunk_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute bytes");
         LOG_FUSE_EXIT("read", -EIO);
         return -1;
@@ -661,15 +661,7 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
         return -ENOMEM;
     }
 
-    // Get attribute size
-    size_t attr_size;
-    if (get_attribute_size(toks, &attr_size) == STATUS_DB_ERROR) {
-        LOG_ERROR("write: failed to get attribute size");
-        LOG_FUSE_EXIT("write", -EIO);
-        return -EIO;
-    }
-
-    if (update_attribute_value(toks, buffer, size, offset, attr_size) == STATUS_DB_ERROR) {
+    if (update_attribute_value(toks, buffer, size, offset) == STATUS_DB_ERROR) {
         LOG_ERROR("write: failed to update attribute");
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
@@ -808,7 +800,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
         struct tokens fk_toks = {
             .table = toks->table, .record = toks->record, .attribute = fks[i]->from};
 
-        if (get_attribute_bytes(&fk_toks, 0, &value) != STATUS_OK) {
+        if (get_attribute_chunk_bytes(&fk_toks, 0, &value) != STATUS_OK) {
             LOG_ERROR("readlink: failed to get FK value for %s", fks[i]->from);
             LOG_FUSE_EXIT("readlink", -EIO);
             return -EIO;

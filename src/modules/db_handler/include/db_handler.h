@@ -107,7 +107,9 @@ status_t init_schema(Schema* schema);
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t get_attribute_bytes(struct tokens* toks, off_t offset, char** bytes);
+status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes);
+
+status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size);
 
 /**
  * Get Attribute Type
@@ -162,8 +164,7 @@ status_t get_attribute_type(struct tokens* toks, int* type);
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset,
-                                size_t attr_size);
+status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset);
 
 
 

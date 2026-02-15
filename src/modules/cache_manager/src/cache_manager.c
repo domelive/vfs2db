@@ -222,8 +222,6 @@ void cache_evict() {
  * @param[in] key Pointer to the cache key of the block to evict.
  */
 void cache_evict_block(CacheKey* key) {
-    pthread_mutex_lock(&cache.lock);
-
     CacheBlock* blk = NULL;
     LOG_TRACE("Looking for block to evict: path='%s', offset=%ld", key->query, key->offset);
     HASH_FIND(hh, cache.map, key, sizeof(CacheKey), blk);
@@ -258,6 +256,29 @@ void cache_evict_block(CacheKey* key) {
         free(blk->data);
     free(blk);
     LOG_TRACE("After free");
+}
+
+/**
+ * @brief Evicts all cache blocks associated with a specific query path.
+ *
+ * @param[in] path Pointer to the query path for which to evict cache blocks.
+ *
+ * This function removes all cache blocks from the cache that are associated
+ * with the specified query path, effectively clearing the cache for that path.
+ */
+void cache_evict_blocks_by_path(const char* path) {
+    pthread_mutex_lock(&cache.lock);
+
+    CacheBlock* current = cache.lru_head;
+    while (current) {
+        CacheBlock* next = current->next;
+        if (strcmp(current->key.query, path) == 0) {
+            LOG_DEBUG("Evicting block by path: path='%s', offset=%ld", current->key.query,
+                      current->key.offset);
+            cache_evict_block(&current->key);
+        }
+        current = next;
+    }
 
     pthread_mutex_unlock(&cache.lock);
 }

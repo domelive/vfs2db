@@ -26,6 +26,7 @@
 
 sqlite3*  db        = NULL; /**< Database connection handle */
 DbSchema* db_schema = NULL; /**< Database schema structure */
+int cache_enabled = 1;
 
 /**
  * @brief FUSE operations structure mapping filesystem calls to handler functions.
@@ -57,6 +58,7 @@ struct options {
     const char* db_path;
     const char* log_level;
     const char* log_file;
+    int cache_enabled;
 };
 
 /**
@@ -67,7 +69,8 @@ struct options {
  */
 #define OPTION(t, p) {t, offsetof(struct options, p), 1}
 static const struct fuse_opt option_spec[] = {OPTION("db=%s", db_path), OPTION("log=%s", log_level),
-                                              OPTION("logfile=%s", log_file), FUSE_OPT_END};
+                                              OPTION("logfile=%s", log_file), OPTION("cache_enabled=%d", cache_enabled),
+                                              FUSE_OPT_END};
 
 int main(int argc, char* argv[]) {
     if (logger_init_default() != 0) {
@@ -79,14 +82,14 @@ int main(int argc, char* argv[]) {
     LOG_INFO("Version 0.0.2");
 
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct options   opt  = {NULL, NULL, NULL};
+    struct options   opt  = {NULL, NULL, NULL, 1};
 
     if (fuse_opt_parse(&args, &opt, option_spec, NULL) == -1) {
         LOG_FATAL("Failed to parse command-line arguments.");
         logger_cleanup();
         return 1;
     }
-
+    
     // reconfigure logger if specified in command line
     if (opt.log_level != NULL || opt.log_file != NULL) {
         LogLevel level =
@@ -98,6 +101,8 @@ int main(int argc, char* argv[]) {
         if (logger_init(level, opt.log_file, true, true, true, true) != 0)
             LOG_ERROR("Failed to reconfigure logger, continuing with default settings.");
     }
+
+    cache_enabled = opt.cache_enabled;
 
     LOG_DEBUG("Parsing command-line arguments...");
 

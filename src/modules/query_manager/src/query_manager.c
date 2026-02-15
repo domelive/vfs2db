@@ -94,7 +94,15 @@ static query_t query_store[] = {
                                        "rowid "
                                        "FROM "
                                        "%s",
-                                       1, NULL}};
+                                       1, NULL},
+
+    [QUERY_TPL_UPDATE_ZERO_BLOB] = {"UPDATE "
+                                    "%s "
+                                    "SET "
+                                    "%s = %s || zeroblob(?) "
+                                    "WHERE "
+                                    "rowid = ?",
+                                    1, NULL}};
 
 /**
  * Initialize Query Manager

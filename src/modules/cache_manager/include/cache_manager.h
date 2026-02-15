@@ -105,6 +105,16 @@ void cache_evict();
 void cache_evict_block(CacheKey* key);
 
 /**
+ * @brief Evicts all cache blocks associated with a specific query path.
+ *
+ * @param[in] path Pointer to the query path for which to evict cache blocks.
+ *
+ * This function removes all cache blocks from the cache that are associated
+ * with the specified query path, effectively clearing the cache for that path.
+ */
+void cache_evict_blocks_by_path(const char* path);
+
+/**
  * @brief Retrieves a cache block from the cache based on the given key.
  *
  * This function looks up a cache block using the provided key. If the block
