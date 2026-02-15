@@ -6,7 +6,7 @@
  * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Database Handler Source File
  * @date   Created on 2025-12-23
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -26,14 +26,13 @@
 
 /**
  * Status Codes
- * 
+ *
  * @brief Enumeration of status codes used throughout the database handler.
- * 
  */
 typedef enum status_t {
     STATUS_OK,
     STATUS_DB_ERROR,
-    
+
     STATUS_CACHE_FULL,
 } status_t;
 

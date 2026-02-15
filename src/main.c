@@ -6,7 +6,7 @@
  * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Main entry point for the VFS2DB filesystem.
  * @date   Created on 2025-12-23
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -21,34 +21,35 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "syscall_handler.h"
 #include "logger.h"
+#include "syscall_handler.h"
 
-sqlite3* db = NULL;         /**< Database connection handle */
+sqlite3*  db        = NULL; /**< Database connection handle */
 DbSchema* db_schema = NULL; /**< Database schema structure */
 
 /**
  * @brief FUSE operations structure mapping filesystem calls to handler functions.
- * 
+ *
  * Each member of this structure corresponds to a specific filesystem operation,
  * and is assigned to the appropriate handler function defined in syscall_handler.h.
- * 
+ *
  */
 static const struct fuse_operations vfs2db_oper = {
-	.getattr        = vfs2db_getattr,
-    .getxattr       = vfs2db_getxattr,
-	.readdir        = vfs2db_readdir,
-	.read           = vfs2db_read,
-    .write          = vfs2db_write,
-    .create         = vfs2db_create,
-    .readlink       = vfs2db_readlink,
-    .init           = vfs2db_init,
-    .destroy        = vfs2db_destroy,
+    .getattr  = vfs2db_getattr,
+    .getxattr = vfs2db_getxattr,
+    .readdir  = vfs2db_readdir,
+    .read     = vfs2db_read,
+    .write    = vfs2db_write,
+    .truncate = vfs2db_truncate,
+    .create   = vfs2db_create,
+    .readlink = vfs2db_readlink,
+    .init     = vfs2db_init,
+    .destroy  = vfs2db_destroy,
 };
 
 /**
  * @brief Structure to hold command-line options.
- * 
+ *
  * This structure is used to parse and store command-line options
  * provided to the FUSE filesystem, specifically the database path.
  */
@@ -60,19 +61,15 @@ struct options {
 
 /**
  * @brief FUSE option specifications.
- * 
+ *
  * This array defines the command-line options that can be passed to the FUSE filesystem.
  * The "db=%s" option allows the user to specify the path to the database file.
  */
-#define OPTION(t, p) { t, offsetof(struct options, p), 1 }
-static const struct fuse_opt option_spec[] = {
-    OPTION("db=%s", db_path),
-    OPTION("log=%s", log_level),
-    OPTION("logfile=%s", log_file),
-    FUSE_OPT_END
-};
+#define OPTION(t, p) {t, offsetof(struct options, p), 1}
+static const struct fuse_opt option_spec[] = {OPTION("db=%s", db_path), OPTION("log=%s", log_level),
+                                              OPTION("logfile=%s", log_file), FUSE_OPT_END};
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     if (logger_init_default() != 0) {
         fprintf(stderr, "Failed to initialize logger\n");
         return 1;
@@ -82,7 +79,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Version 0.0.2");
 
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct options opt = { NULL, NULL, NULL };
+    struct options   opt  = {NULL, NULL, NULL};
 
     if (fuse_opt_parse(&args, &opt, option_spec, NULL) == -1) {
         LOG_FATAL("Failed to parse command-line arguments.");
@@ -92,13 +89,11 @@ int main(int argc, char *argv[]) {
 
     // reconfigure logger if specified in command line
     if (opt.log_level != NULL || opt.log_file != NULL) {
-        LogLevel level = opt.log_level
-            ? logger_get_level_from_string(opt.log_level)
-            : LOG_LEVEL_INFO;
+        LogLevel level =
+            opt.log_level ? logger_get_level_from_string(opt.log_level) : LOG_LEVEL_INFO;
 
-        LOG_INFO("Reconfiguring logger: level=%s, file=%s",
-            LOG_LEVEL_NAMES[level],
-            opt.log_file ? opt.log_file : "(none)");
+        LOG_INFO("Reconfiguring logger: level=%s, file=%s", LOG_LEVEL_NAMES[level],
+                 opt.log_file ? opt.log_file : "(none)");
 
         if (logger_init(level, opt.log_file, true, true, true, true) != 0)
             LOG_ERROR("Failed to reconfigure logger, continuing with default settings.");

@@ -6,7 +6,7 @@
  * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Arena Source File
  * @date   Created on 2025-12-23
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -29,12 +29,12 @@
 
 /**
  * @brief Creates a new memory arena of the specified size.
- * 
+ *
  * This function allocates a contiguous block of memory of the specified size
  * and initializes an `Arena` structure to manage it.
- * 
+ *
  * @param[in] size The total size of the arena to create.
- * 
+ *
  * @return Pointer to the newly created `Arena` structure, or NULL on failure.
  */
 Arena* arena_create(size_t size) {
@@ -45,20 +45,20 @@ Arena* arena_create(size_t size) {
     }
 
     Arena* arena = (Arena*)mem;
-    
-    arena->base_pos = mem + sizeof(Arena);
+
+    arena->base_pos   = mem + sizeof(Arena);
     arena->total_size = size;
-    arena->offset = 0;
+    arena->offset     = 0;
 
     return arena;
 }
 
 /**
  * @brief Destroys the memory arena and frees all associated memory.
- * 
+ *
  * This function frees the memory block managed by the arena and
  * deallocates the `Arena` structure itself.
- * 
+ *
  * @param[in] arena Pointer to the `Arena` to destroy.
  */
 void arena_destroy(Arena* arena) {
@@ -73,13 +73,13 @@ void arena_destroy(Arena* arena) {
 
 /**
  * @brief Allocates memory from the arena.
- * 
+ *
  * This function allocates a block of memory of the specified size from the arena.
  * The allocated memory is aligned to `ARENA_ALIGNMENT` bytes.
- * 
+ *
  * @param[in] arena Pointer to the `Arena` from which to allocate memory.
  * @param[in] size  The size of the memory block to allocate.
- * 
+ *
  * @return Pointer to the allocated memory block, or NULL if there is insufficient space.
  */
 void* arena_alloc(Arena* arena, size_t size) {
@@ -88,8 +88,8 @@ void* arena_alloc(Arena* arena, size_t size) {
     uintptr_t padding = (ARENA_ALIGNMENT - (arena->offset % ARENA_ALIGNMENT)) % ARENA_ALIGNMENT;
 
     if (arena->offset + padding + size > arena->total_size) {
-        LOG_ERROR("Arena out of memory: requested %zu bytes, available %zu bytes",
-                  size, arena_get_available_size(arena));
+        LOG_ERROR("Arena out of memory: requested %zu bytes, available %zu bytes", size,
+                  arena_get_available_size(arena));
         return NULL;
     }
 
@@ -102,22 +102,22 @@ void* arena_alloc(Arena* arena, size_t size) {
 
 /**
  * @brief Allocates zero-initialized memory from the arena.
- * 
+ *
  * This function allocates a block of memory for an array of `count` elements,
  * each of size `size`, from the arena. The allocated memory is initialized to zero
  * and aligned to `ARENA_ALIGNMENT` bytes.
- * 
+ *
  * @param[in] arena Pointer to the `Arena` from which to allocate memory.
  * @param[in] count Number of elements to allocate.
  * @param[in] size  Size of each element.
- * 
+ *
  * @return Pointer to the allocated memory block, or NULL if there is insufficient space.
  */
 void* arena_calloc(Arena* arena, size_t count, size_t size) {
     assert(arena != NULL && "arena_calloc called with NULL arena");
-    
+
     void* ptr = arena_alloc(arena, count * size);
-    
+
     if (ptr) {
         LOG_TRACE("arena_calloc: zero-initializing %zu bytes", count * size);
         memset(ptr, 0, count * size);
@@ -128,22 +128,22 @@ void* arena_calloc(Arena* arena, size_t count, size_t size) {
 
 /**
  * @brief Duplicates a string into the arena.
- * 
+ *
  * This function allocates memory for a copy of the specified string
  * from the arena and copies the string into the allocated memory.
- * 
+ *
  * @param[in] arena Pointer to the `Arena` from which to allocate memory.
  * @param[in] str   The string to duplicate.
- * 
+ *
  * @return Pointer to the duplicated string in the arena, or NULL if there is insufficient space.
  */
 char* arena_strdup(Arena* arena, const char* str) {
     assert(arena != NULL && "arena_strdup called with NULL arena");
-    assert(str   != NULL && "arena_strdup called with NULL string");
+    assert(str != NULL && "arena_strdup called with NULL string");
 
-    size_t len = strlen(str) + 1; // +1 for null terminator
-    char* dup_str = (char*)arena_alloc(arena, len);
-    
+    size_t len     = strlen(str) + 1; // +1 for null terminator
+    char*  dup_str = (char*)arena_alloc(arena, len);
+
     if (dup_str) {
         LOG_TRACE("arena_strdup: duplicating string of length %zu", len - 1);
         memcpy(dup_str, str, len);
@@ -154,17 +154,17 @@ char* arena_strdup(Arena* arena, const char* str) {
 
 /**
  * @brief Resets the arena for reuse.
- * 
+ *
  * This function resets the arena's offset to zero, effectively
  * marking all previously allocated memory as free. Note that this
  * does not actually free any memory; it simply allows for reuse
  * of the arena's memory block.
- * 
+ *
  * @param[in] arena Pointer to the `Arena` to reset.
  */
 void arena_reset(Arena* arena) {
     assert(arena != NULL && "arena_reset called with NULL arena");
-    
+
     arena->offset = 0;
 }
 
@@ -174,9 +174,9 @@ void arena_reset(Arena* arena) {
 
 /**
  * @brief Gets the used size of the arena.
- * 
+ *
  * @param[in] arena Pointer to the `Arena`.
- * 
+ *
  * @return Used size of the arena in bytes.
  */
 size_t arena_get_used_size(Arena* arena) {
@@ -186,9 +186,9 @@ size_t arena_get_used_size(Arena* arena) {
 
 /**
  * @brief Gets the available size of the arena.
- * 
+ *
  * @param[in] arena Pointer to the `Arena`.
- * 
+ *
  * @return Available size of the arena in bytes.
  */
 size_t arena_get_available_size(Arena* arena) {
@@ -198,9 +198,9 @@ size_t arena_get_available_size(Arena* arena) {
 
 /**
  * @brief Gets the total size of the arena.
- * 
+ *
  * @param[in] arena Pointer to the `Arena`.
- * 
+ *
  * @return Total size of the arena in bytes.
  */
 size_t arena_get_total_size(Arena* arena) {
@@ -210,19 +210,19 @@ size_t arena_get_total_size(Arena* arena) {
 
 /**
  * @brief Displays the current state of the arena.
- * 
+ *
  * This function logs the used size, available size, and total size
  * of the arena for debugging purposes.
- * 
+ *
  * @param[in] arena Pointer to the `Arena` to view.
  */
 void arena_view(Arena* arena) {
     assert(arena != NULL && "arena_view called with NULL arena");
 
-    size_t used = arena_get_used_size(arena);
+    size_t used      = arena_get_used_size(arena);
     size_t available = arena_get_available_size(arena);
-    size_t total = arena_get_total_size(arena);
+    size_t total     = arena_get_total_size(arena);
 
-    LOG_DEBUG("Arena View: Used: %zu bytes, Available: %zu bytes, Total: %zu bytes",
-             used, available, total);
+    LOG_DEBUG("Arena View: Used: %zu bytes, Available: %zu bytes, Total: %zu bytes", used,
+              available, total);
 }

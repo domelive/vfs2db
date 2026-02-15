@@ -6,7 +6,7 @@
  * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Implementation of syscall handlers for the VFS2DB filesystem.
  * @date   Created on 2025-12-23
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -30,11 +30,10 @@ static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficien
 
 /**
  * Ensure Arena Init
- * 
+ *
  * @brief Retrieves the thread-local memory arena, creating it if it doesn't exist.
- * 
+ *
  * @return Pointer to the thread-local Arena
- * 
  */
 void ensure_arena_init() {
     if (!arena) {
@@ -53,13 +52,12 @@ void ensure_arena_init() {
 
 /**
  * Tokenize Path
- * 
+ *
  * @brief Splits the given path into its components: table, record, and attribute.
- * 
+ *
  * @param[in] path The file path to tokenize
- * 
+ *
  * @return Pointer to a tokens structure containing the split components
- * 
  */
 static inline struct tokens* tokenize_path(const char* path) {
     // path := /table/record/attribute
@@ -75,26 +73,25 @@ static inline struct tokens* tokenize_path(const char* path) {
         return NULL;
     }
 
-    char* path_copy = arena_strdup(arena, path); 
+    char* path_copy = arena_strdup(arena, path);
     if (!path_copy) {
         LOG_ERROR("Failed to duplicate path string");
         return NULL;
     }
 
-    char *cursor = path_copy;
-    if (cursor[0] == '/') cursor++;
+    char* cursor = path_copy;
+    if (cursor[0] == '/')
+        cursor++;
 
-    char* t = strtok(cursor, "/");
-    toks->table = t ? arena_strdup(arena, t) : NULL;
-    t = strtok(NULL, "/");
-    toks->record = t ? arena_strdup(arena, t) : NULL;
-    t = strtok(NULL, "/");
+    char* t         = strtok(cursor, "/");
+    toks->table     = t ? arena_strdup(arena, t) : NULL;
+    t               = strtok(NULL, "/");
+    toks->record    = t ? arena_strdup(arena, t) : NULL;
+    t               = strtok(NULL, "/");
     toks->attribute = t ? arena_strdup(arena, t) : NULL;
 
-    LOG_TRACE("Tokenized path '%s': table=%s, record=%s, attr=%s",
-              path,
-              toks->table ? toks->table : "(null)",
-              toks->record ? toks->record : "(null)",
+    LOG_TRACE("Tokenized path '%s': table=%s, record=%s, attr=%s", path,
+              toks->table ? toks->table : "(null)", toks->record ? toks->record : "(null)",
               toks->attribute ? toks->attribute : "(null)");
 
     return toks;
@@ -102,13 +99,12 @@ static inline struct tokens* tokenize_path(const char* path) {
 
 /**
  * Remove Extension
- * 
+ *
  * @brief Removes the ".vfs2db" extension from the given path.
- * 
+ *
  * @param[in] path The file path from which to remove the extension
- * 
+ *
  * @return Pointer to a new string without the extension
- * 
  */
 static inline char* remove_extension(const char* path) {
     int noext_path_length = strlen(path) - 7;
@@ -131,13 +127,12 @@ static inline char* remove_extension(const char* path) {
 
 /**
  * Check Symlink
- * 
+ *
  * @brief Checks if the given attribute in the tokens structure is a foreign key.
- * 
+ *
  * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
- * 
+ *
  * @return 1 if the attribute is a foreign key, 0 otherwise
- * 
  */
 static inline int check_symlink(struct tokens* toks) {
     Schema* table = find_schema_by_name(db_schema, toks->table);
@@ -157,16 +152,15 @@ static inline int check_symlink(struct tokens* toks) {
 
 /**
  * VFS2DB Init
- * 
+ *
  * @brief Initializes the VFS2DB filesystem by loading the database schema.
- * 
- * @return Pointer to private data (NULL in this case)
- * 
+ *
+ * @return Pointer to private data (not used in this case)
  */
-void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
+void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     LOG_INFO("Initializing VFS2DB filesystem...");
 
-    const char* db_path = (const char*) fuse_get_context()->private_data;
+    const char* db_path = (const char*)fuse_get_context()->private_data;
     if (!db_path) {
         LOG_FATAL("Database path not provided in FUSE private data");
         return NULL;
@@ -184,8 +178,8 @@ void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
         LOG_FATAL("Failed to allocate DbSchema");
         return NULL;
     }
-    
-    char* db_name = strdup(db_path);
+
+    char* db_name                = strdup(db_path);
     db_name[strlen(db_path) - 3] = 0;
     db_name += 3;
     db_schema->db_name = db_name;
@@ -209,10 +203,8 @@ void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     if (logger_get_level() <= LOG_LEVEL_DEBUG) {
         LOG_DEBUG("=== Database Schema Summary ===");
         HASH_FOREACH(current_schema, db_schema->tables_head) {
-            LOG_DEBUG("Table: %s (PKs=%d, FKs=%d, Attrs=%d)",
-                      current_schema->name,
-                      count_pks(current_schema),
-                      count_fks(current_schema),
+            LOG_DEBUG("Table: %s (PKs=%d, FKs=%d, Attrs=%d)", current_schema->name,
+                      count_pks(current_schema), count_fks(current_schema),
                       count_attributes(current_schema));
         }
         LOG_DEBUG("===============================");
@@ -224,23 +216,22 @@ void* vfs2db_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 /**
  * VFS2DB Destroy
- * 
+ *
  * @brief Cleans up resources when the VFS2DB filesystem is unmounted.
- * 
+ *
  * @param[in] private_data Pointer to private data (not used in this case)
- * 
  */
-void vfs2db_destroy(void *private_data) {
+void vfs2db_destroy(void* private_data) {
     LOG_INFO("Shutting down VFS2DB filesystem...");
-    
+
     qm_cleanup();
-    
+
     if (db) {
         sqlite3_close(db);
         LOG_DEBUG("SQLite database closed");
         db = NULL;
     }
-    
+
     if (db_schema) {
         HASH_FOREACH(current_schema, db_schema->tables_head) {
             LOG_TRACE("Freeing schema: %s", current_schema->name);
@@ -254,10 +245,10 @@ void vfs2db_destroy(void *private_data) {
         db_schema = NULL;
         LOG_DEBUG("Database schema freed");
     }
-    
+
     // Free FUSE args if passed as private_data
     if (private_data) {
-        struct fuse_args *args = (struct fuse_args*)private_data;
+        struct fuse_args* args = (struct fuse_args*)private_data;
         fuse_opt_free_args(args);
         LOG_DEBUG("FUSE arguments freed");
     }
@@ -271,23 +262,22 @@ void vfs2db_destroy(void *private_data) {
 
 /**
  * VFS2DB Getattr
- * 
+ *
  * @brief Retrieves the attributes of a file or directory in the VFS2DB filesystem.
- * 
+ *
  * @param[in]  path  The file or directory path
  * @param[out] st    Pointer to a stat structure to be filled with attributes
  * @param[in]  fi    Pointer to fuse_file_info structure (not used in this case)
- * 
+ *
  * @return 0 on success, negative error code on failure
- * 
  */
-int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
+int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi) {
     (void)fi;
-    
+
     LOG_FUSE_ENTER("getattr", path);
 
     ensure_arena_init();
-    
+
     memset(st, 0, sizeof(*st));
 
     // /heavy_files/content.vfs2db
@@ -300,22 +290,22 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
             return -ENOENT;
         }
 
-        st->st_mode = S_IFDIR | 0755;
+        st->st_mode  = S_IFDIR | 0755;
         st->st_nlink = 2;
-        st->st_uid = getuid();
-        st->st_gid = getgid();
+        st->st_uid   = getuid();
+        st->st_gid   = getgid();
         st->st_atime = st->st_mtime = time(NULL);
 
         LOG_TRACE("getattr: %s is a directory", path);
         LOG_FUSE_EXIT("getattr", 0);
     } else {
-        char *noext_path = remove_extension(path);
+        char* noext_path = remove_extension(path);
         if (!noext_path) {
             LOG_FUSE_EXIT("getattr", -ENOMEM);
             return -ENOMEM;
         }
-        
-        struct tokens *toks = tokenize_path(noext_path);
+
+        struct tokens* toks = tokenize_path(noext_path);
         if (!toks) {
             LOG_FUSE_EXIT("getattr", -ENOMEM);
             return -ENOMEM;
@@ -330,17 +320,17 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
         // We need to check if it is a symlink
         int is_symlink = check_symlink(toks);
         if (is_symlink) {
-            st->st_mode = S_IFLNK | 0644;
+            st->st_mode  = S_IFLNK | 0644;
             st->st_nlink = 1;
-            st->st_uid = getuid();
-            st->st_gid = getgid();
+            st->st_uid   = getuid();
+            st->st_gid   = getgid();
             st->st_atime = st->st_mtime = time(NULL);
             LOG_TRACE("getattr: %s is a symlink (FK)", path);
         } else {
-            st->st_mode = S_IFREG | 0644;
+            st->st_mode  = S_IFREG | 0644;
             st->st_nlink = 1;
-            st->st_uid = getuid();
-            st->st_gid = getgid();
+            st->st_uid   = getuid();
+            st->st_gid   = getgid();
             st->st_atime = st->st_mtime = time(NULL);
             LOG_TRACE("getattr: %s is a regular file", path);
         }
@@ -362,18 +352,17 @@ int vfs2db_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
 
 /**
  * VFS2DB Getxattr
- * 
+ *
  * @brief Retrieves the extended attribute of a file in the VFS2DB filesystem.
- * 
+ *
  * @param[in]  path  The file path
  * @param[in]  name  The name of the extended attribute to retrieve
  * @param[out] value Pointer to a buffer where the attribute value will be stored
  * @param[in]  size  Size of the buffer
- * 
+ *
  * @return Size of the attribute value on success, negative error code on failure
- * 
  */
-int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size) {
+int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size) {
     LOG_FUSE_ENTER("getxattr", path);
     LOG_TRACE("getxattr: name=%s, bufsize=%zu", name, size);
 
@@ -384,40 +373,54 @@ int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size
         return -ENODATA;
     }
 
-    char *noext_path = remove_extension(path);
+    char* noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_ERROR("Failed to remove extension from path: %s", path);
         return -ENOMEM;
     }
-    
-    struct tokens *toks = tokenize_path(noext_path);
+
+    struct tokens* toks = tokenize_path(noext_path);
     if (!toks) {
         LOG_ERROR("Failed to tokenize path: %s", path);
         return -ENOMEM;
     }
 
     const char* t_str;
-    int attr_type;
+    int         attr_type;
     if (get_attribute_type(toks, &attr_type) != STATUS_OK) {
         LOG_ERROR("getxattr: failed to get attribute type for %s", path);
         return -EIO;
     }
 
     switch (attr_type) {
-        case SQLITE_TEXT:    t_str = "TEXT"; break;
-        case SQLITE_INTEGER: t_str = "INTEGER"; break;
-        case SQLITE_FLOAT:   t_str = "FLOAT"; break;
-        case SQLITE_BLOB:    t_str = "BLOB"; break;
-        case SQLITE_NULL:    t_str = "NULL"; break;
-        default:             t_str = "UNDEFINED"; break;
+    case SQLITE_TEXT:
+        t_str = "TEXT";
+        break;
+    case SQLITE_INTEGER:
+        t_str = "INTEGER";
+        break;
+    case SQLITE_FLOAT:
+        t_str = "FLOAT";
+        break;
+    case SQLITE_BLOB:
+        t_str = "BLOB";
+        break;
+    case SQLITE_NULL:
+        t_str = "NULL";
+        break;
+    default:
+        t_str = "UNDEFINED";
+        break;
     }
 
     LOG_DEBUG("getxattr: user.type=%s for %s", t_str, path);
 
     // 3. Return size or copy data
-    if (size == 0) return strlen(t_str);
-    if (size < strlen(t_str)) return -ERANGE;
-    
+    if (size == 0)
+        return strlen(t_str);
+    if (size < strlen(t_str))
+        return -ERANGE;
+
     strncpy(value, t_str, size);
 
     LOG_FUSE_EXIT("getxattr", strlen(t_str));
@@ -426,20 +429,20 @@ int vfs2db_getxattr(const char *path, const char *name, char *value, size_t size
 
 /**
  * VFS2DB Readdir
- * 
+ *
  * @brief Reads the contents of a directory in the VFS2DB filesystem.
- * 
+ *
  * @param[in]  path    The directory path
  * @param[out] buffer  Pointer to a buffer where directory entries will be stored
  * @param[in]  filler  Function pointer to add entries to the buffer
  * @param[in]  offset  Offset within the directory (not used in this case)
  * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
  * @param[in]  flags   Flags for reading the directory (not used in this case)
- * 
+ *
  * @return 0 on success, negative error code on failure
- * 
  */
-int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
+int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset,
+                   struct fuse_file_info* fi, enum fuse_readdir_flags flags) {
     (void)offset;
     (void)fi;
     (void)flags;
@@ -456,103 +459,99 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
     // path: /orders/2  |   /orders/2/
 
     // Togliamo slash alla fine, se c'e'
-    char *path_copy = arena_strdup(arena, path);
+    char* path_copy = arena_strdup(arena, path);
     if (!path_copy) {
         LOG_FUSE_EXIT("readdir", -ENOMEM);
         return -ENOMEM;
     }
 
-    if (path_copy[strlen(path)-1] == '/') {
-        path_copy[strlen(path)-1] = 0;
+    if (path_copy[strlen(path) - 1] == '/') {
+        path_copy[strlen(path) - 1] = 0;
     }
-    
-    struct tokens *toks = tokenize_path(path_copy);
+
+    struct tokens* toks = tokenize_path(path_copy);
     if (!toks) {
         LOG_FUSE_EXIT("readdir", -ENOMEM);
         return -ENOMEM;
     }
 
     int slash_count = COUNT_CHAR(path_copy, '/');
-    LOG_TRACE("readdir: slash_count=%d, table=%s, record=%s",
-        slash_count,
-        toks->table ? toks->table : "(null)",
-        toks->record ? toks->record : "(null)");
-    
-    switch(slash_count) {
-        case 0: {
-            LOG_DEBUG("readdir: listing tables");
-            
-            int count = 0;
-            HASH_FOREACH(current_schema, db_schema->tables_head) {
-                filler(buffer, current_schema->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-                count++;
-            }
+    LOG_TRACE("readdir: slash_count=%d, table=%s, record=%s", slash_count,
+              toks->table ? toks->table : "(null)", toks->record ? toks->record : "(null)");
 
-            LOG_TRACE("readdir: found %d tables", count);
+    switch (slash_count) {
+    case 0: {
+        LOG_DEBUG("readdir: listing tables");
+
+        int count = 0;
+        HASH_FOREACH(current_schema, db_schema->tables_head) {
+            filler(buffer, current_schema->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+            count++;
+        }
+
+        LOG_TRACE("readdir: found %d tables", count);
+        break;
+    }
+
+    case 1: {
+        LOG_DEBUG("readdir: listing records for table '%s'", toks->table);
+
+        char* record_list[MAX_SIZE];
+        int   n_records;
+
+        if (get_table_rowids(toks->table, record_list, &n_records) == STATUS_DB_ERROR) {
+            LOG_ERROR("Failed to get rowids for table '%s'", toks->table);
             break;
         }
 
-        case 1: {
-            LOG_DEBUG("readdir: listing records for table '%s'", toks->table);
+        for (int i = 0; i < n_records; i++) {
+            filler(buffer, record_list[i], NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+        }
 
-            char *record_list[MAX_SIZE];
-            int n_records;
-            
-            if (get_table_rowids(toks->table, record_list, &n_records) == STATUS_DB_ERROR) {
-                LOG_ERROR("Failed to get rowids for table '%s'", toks->table);
-                break;
-            }
-            
-            for (int i=0; i<n_records; i++) {
-                filler(buffer, record_list[i], NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-            }
-            
-            LOG_TRACE("readdir: listed %d records", n_records);
+        LOG_TRACE("readdir: listed %d records", n_records);
+        break;
+    }
+
+    case 2: {
+        LOG_DEBUG("readdir: listing attributes for %s/%s", toks->table, toks->record);
+
+        Schema* table = find_schema_by_name(db_schema, toks->table);
+        if (!table) {
+            LOG_ERROR("Table not found: %s", toks->table);
             break;
         }
 
-        case 2: {
-            LOG_DEBUG("readdir: listing attributes for %s/%s", 
-                      toks->table, toks->record);
-            
-            Schema* table = find_schema_by_name(db_schema, toks->table);
-            if (!table) {
-                LOG_ERROR("Table not found: %s", toks->table);
-                break;
-            }
+        char file[MAX_SIZE];
+        int  count = 0;
 
-            char file[MAX_SIZE];
-            int count = 0;
-
-            // Pk
-            HASH_FOREACH(current_pk, table->pk_head) {
-                snprintf(file, sizeof(file), "%s.vfs2db", current_pk->name);
-                filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-                count++;
-            }
-
-            // Attr
-            HASH_FOREACH(current_attr, table->attr_head) {
-                snprintf(file, sizeof(file), "%s.vfs2db", current_attr->name);
-                filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-                count++;
-            }
-
-            // Fk
-            HASH_FOREACH(current_fk, table->fks_head) {
-                snprintf(file, sizeof(file), "%s.vfs2db", current_fk->from);
-                filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-                count++;
-            }
-
-            LOG_TRACE("readdir: listed %d attributes", count);
-            break;
+        // Pk
+        HASH_FOREACH(current_pk, table->pk_head) {
+            snprintf(file, sizeof(file), "%s.vfs2db", current_pk->name);
+            filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+            count++;
         }
 
-        default:
-            LOG_ERROR("readdir: unexpected path depth %d for '%s'", 
-                      slash_count, path);
-            break;
+        // Attr
+        HASH_FOREACH(current_attr, table->attr_head) {
+            snprintf(file, sizeof(file), "%s.vfs2db", current_attr->name);
+            filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+            count++;
+        }
+
+        // Fk
+        HASH_FOREACH(current_fk, table->fks_head) {
+            snprintf(file, sizeof(file), "%s.vfs2db", current_fk->from);
+            filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+            count++;
+        }
+
+        LOG_TRACE("readdir: listed %d attributes", count);
+        break;
+    }
+
+    default:
+        LOG_ERROR("readdir: unexpected path depth %d for '%s'", slash_count, path);
+        break;
     }
 
     LOG_FUSE_EXIT("readdir", 0);
@@ -561,19 +560,19 @@ int vfs2db_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t
 
 /**
  * VFS2DB Read
- * 
+ *
  * @brief Reads data from a file in the VFS2DB filesystem.
- * 
+ *
  * @param[in]  path    The file path
  * @param[out] buffer  Buffer to store the read data
  * @param[in]  size    Size of the buffer
  * @param[in]  offset  Offset within the file to start reading
  * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
- * 
+ *
  * @return Number of bytes read on success, negative error code on failure
- * 
  */
-int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
+                struct fuse_file_info* fi) {
     (void)fi;
 
     LOG_FUSE_ENTER("read", path);
@@ -582,22 +581,23 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     ensure_arena_init();
 
     size_t path_len = strlen(path);
-    if (path_len < 7) return -1; // Safety check
+    if (path_len < 7)
+        return -1; // Safety check
 
-    char *noext_path = remove_extension(path);
+    char* noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_FUSE_EXIT("read", -ENOMEM);
         return -ENOMEM;
     }
 
-    struct tokens *toks = tokenize_path(noext_path);
+    struct tokens* toks = tokenize_path(noext_path);
     if (!toks) {
         LOG_FUSE_EXIT("read", -ENOMEM);
         return -ENOMEM;
     }
-    
+
     size_t total_size;
-    char *bytes = NULL;
+    char*  bytes = NULL;
 
     if (get_attribute_size(toks, &total_size) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute size");
@@ -614,7 +614,7 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
     // Let's use the cache
     if (get_attribute_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute bytes");
-        LOG_FUSE_EXIT("read", -EIO);        
+        LOG_FUSE_EXIT("read", -EIO);
         return -1;
     }
 
@@ -623,25 +623,25 @@ int vfs2db_read(const char *path, char *buffer, size_t size, off_t offset, struc
 
     LOG_DEBUG("read: returned %zu bytes from offset %ld", bytes_to_copy, offset);
     LOG_FUSE_EXIT("read", bytes_to_copy);
-    
+
     return bytes_to_copy;
 }
 
 /**
  * VFS2DB Write
- * 
+ *
  * @brief Writes data to a file in the VFS2DB filesystem.
- * 
+ *
  * @param[in] path    The file path
  * @param[in] buffer  Buffer containing the data to write
  * @param[in] size    Size of the data to write
  * @param[in] offset  Offset within the file to start writing
  * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
- * 
+ *
  * @return Number of bytes written on success, negative error code on failure
- * 
  */
-int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset,
+                 struct fuse_file_info* fi) {
     (void)fi;
 
     LOG_FUSE_ENTER("write", path);
@@ -649,13 +649,13 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
 
     ensure_arena_init();
 
-    char *noext_path = remove_extension(path);
+    char* noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_FUSE_EXIT("write", -ENOMEM);
         return -ENOMEM;
     }
-    
-    struct tokens *toks = tokenize_path(noext_path);
+
+    struct tokens* toks = tokenize_path(noext_path);
     if (!toks) {
         LOG_FUSE_EXIT("write", -ENOMEM);
         return -ENOMEM;
@@ -668,70 +668,104 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
     }
-    
+
     if (update_attribute_value(toks, buffer, size, offset, attr_size) == STATUS_DB_ERROR) {
         LOG_ERROR("write: failed to update attribute");
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
     }
 
-    LOG_DEBUG("write: wrote %zu bytes at offset %ld)", 
-              size, offset);
+    LOG_DEBUG("write: wrote %zu bytes at offset %ld)", size, offset);
     LOG_FUSE_EXIT("write", size);
- 
+
     return (int)size;
+}
+
+/**
+ * VFS2DB Truncate
+ *
+ * @brief Truncates a file in the VFS2DB filesystem to a specified size.
+ *
+ * @param[in] path    The file path
+ * @param[in] size    The size to truncate to
+ * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
+    LOG_FUSE_ENTER("truncate", path);
+
+    ensure_arena_init();
+
+    struct tokens* toks = tokenize_path(path);
+    if (!toks) {
+        LOG_FUSE_EXIT("truncate", -ENOMEM);
+        return -ENOMEM;
+    }
+
+    if (size == 0) {
+        if (set_attribute_null(toks) == STATUS_DB_ERROR) {
+            LOG_ERROR("truncate: failed to set attribute to NULL");
+            LOG_FUSE_EXIT("truncate", -EIO);
+            return -EIO;
+        }
+    } else {        
+        LOG_WARN("truncate: truncation to non-zero size is not supported, setting attribute to NULL instead");
+    }
+
+    LOG_FUSE_EXIT("truncate", 0);
+    return 0;
 }
 
 /**
  * VFS2DB Create
  * @todo Implement the function to insert a new record in the database
- * 
- * @brief Creates a new file in the VFS2DB filesystem, which corresponds to inserting a new record in the database.
- * 
+ *
+ * @brief Creates a new file in the VFS2DB filesystem, which corresponds to inserting a new
+ * record in the database.
+ *
  * @param[in] path The file path to create
  * @param[in] mode The file mode (permissions)
  * @param[in] fi   Pointer to fuse_file_info structure (not used in this case
- * 
+ *
  * @return 0 on success, negative error code on failure
- * 
  */
-int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info *fi) {
+int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
     (void)mode;
     (void)fi;
 
     LOG_FUSE_ENTER("create", path);
-    
+
     // TODO: Implement record creation
     LOG_WARN("create: not implemented yet");
-    
+
     LOG_FUSE_EXIT("create", 0);
     return 0;
 }
 
 /**
  * VFS2DB Readlink
- * 
+ *
  * @brief Reads the target of a symbolic link in the VFS2DB filesystem.
- * 
+ *
  * @param[in] path   The symbolic link path
  * @param[out] buffer Buffer to store the link target
  * @param[in] size   Size of the buffer
- * 
+ *
  * @return 0 on success, negative error code on failure
- * 
  */
 int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     LOG_FUSE_ENTER("readlink", path);
 
     ensure_arena_init();
 
-    char *noext_path = remove_extension(path);
+    char* noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_FUSE_EXIT("readlink", -ENOMEM);
         return -ENOMEM;
     }
 
-    struct tokens *toks = tokenize_path(noext_path);
+    struct tokens* toks = tokenize_path(noext_path);
     if (!toks) {
         LOG_FUSE_EXIT("readlink", -ENOMEM);
         return -ENOMEM;
@@ -770,19 +804,16 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     // Get values of the fks
     char* fk_values[n_same_fks];
     for (int i = 0; i < n_same_fks; i++) {
-        char* value = NULL;
+        char*         value   = NULL;
         struct tokens fk_toks = {
-            .table = toks->table,
-            .record = toks->record,
-            .attribute = fks[i]->from
-        };
+            .table = toks->table, .record = toks->record, .attribute = fks[i]->from};
 
         if (get_attribute_bytes(&fk_toks, 0, &value) != STATUS_OK) {
             LOG_ERROR("readlink: failed to get FK value for %s", fks[i]->from);
             LOG_FUSE_EXIT("readlink", -EIO);
             return -EIO;
         }
-        
+
         fk_values[i] = value;
         LOG_TRACE("readlink: FK value %s=%s", fks[i]->from, value);
     }
@@ -801,6 +832,6 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
     LOG_DEBUG("readlink: target=%s", buffer);
     LOG_FUSE_EXIT("readlink", 0);
-    
+
     return 0;
 }

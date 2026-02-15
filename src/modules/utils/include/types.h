@@ -6,7 +6,7 @@
  * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
  * @brief  Type definitions for database schema and related structures.
  * @date   Created on 2025-12-23
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -24,41 +24,38 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-#include "uthash.h"
 #include "const.h"
+#include "uthash.h"
 
 // =============================================================
 // Metadata Structures
 // =============================================================
 
 typedef struct Pk {
-    char* name;
+    char*          name;
     UT_hash_handle hh;
 } Pk;
 
 typedef struct Attr {
-    char* name;
+    char*          name;
+    int            sqlite_type;
     UT_hash_handle hh;
 } Attr;
 
 /**
  * @brief Structure representing a Foreign Key relationship in a database schema.
- * 
+ *
  * Includes the following fields:
- * 
  * - `from`:      The attribute in the current table that is the foreign key.
- * 
  * - `table`:     The name of the referenced table.
- * 
  * - `to`:        The attribute in the referenced table that the foreign key points to.
- * 
  * - `hh`:        UTHash handle for hash table operations.
- * 
- * @note All string fields are dynamically allocated and should be freed appropriately to avoid memory leaks.
- * 
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
  */
 typedef struct Fk {
-    char* from;  
+    char* from;
     char* table;
     char* to;
 
@@ -67,36 +64,29 @@ typedef struct Fk {
 
 /**
  * @brief Structure representing the schema of a database table.
- * 
+ *
  * Includes the following fields:
- * 
  * - `name`:    The name of the table and also the key for the schema.
- * 
  * - `pk`:      Set of strings representing the names of primary key attributes.
- * 
  * - `attr`:    Set of strings representing the names of other attributes.
- * 
  * - `fks`:     Hashmap of pointers to `Fk` structures representing foreign key relationships.
- * 
  * - `n_pk`:    Number of primary key attributes.
- * 
  * - `n_attr`:  Number of other attributes.
- * 
  * - `n_fks`:   Number of foreign key relationships.
- * 
  * - `hh`:      UTHash handle for hash table operations.
- * 
- * @note All string fields are dynamically allocated and should be freed appropriately to avoid memory leaks.
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
  */
 typedef struct Schema {
     char* name;
-    
+
     Pk*   pk_head;
     Attr* attr_head;
     Fk*   fks_head;
-    
+
     UT_hash_handle hh;
-} Schema; 
+} Schema;
 
 // =============================================================
 // Global Structures
@@ -104,15 +94,15 @@ typedef struct Schema {
 
 /**
  * @brief Structure representing the overall database schema.
- * 
- * Includes the following fields:
- * 
- * - `tables_head`:   Pointer to the head of a hashmap of `Schema` structures representing all tables in the database.
  *
+ * Includes the following fields:
+ * - `tables_head`: Pointer to the head of a hashmap of `Schema` structures representing all
+ * tables in the database.
+ *- `db_name`: The name of the database.
  */
 typedef struct DbSchema {
     Schema* tables_head;
-    char* db_name;
+    char*   db_name;
 } DbSchema;
 
 // =============================================================
