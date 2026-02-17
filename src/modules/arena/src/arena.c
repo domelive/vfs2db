@@ -85,16 +85,28 @@ void arena_destroy(Arena* arena) {
 void* arena_alloc(Arena* arena, size_t size) {
     assert(arena != NULL && "arena_alloc called with NULL arrena");
 
+    // Calculate the padding needed to align the allocation to ARENA_ALIGNMENT bytes. This ensures
+    // that all allocations from the arena are properly aligned, which can improve performance and
+    // prevent issues on architectures that require aligned access.
     uintptr_t padding = (ARENA_ALIGNMENT - (arena->offset % ARENA_ALIGNMENT)) % ARENA_ALIGNMENT;
 
+    // Check if there is enough space in the arena to accommodate the requested size along with the
+    // necessary padding for alignment.
     if (arena->offset + padding + size > arena->total_size) {
         LOG_ERROR("Arena out of memory: requested %zu bytes, available %zu bytes", size,
                   arena_get_available_size(arena));
         return NULL;
     }
 
+    // Update the arena's offset to account for the padding and allocate the requested memory block.
     arena->offset += padding;
+
+    // Calculate the pointer to the allocated memory block based on the base position and the
+    // current offset, and return it to the caller.
     void* ptr = arena->base_pos + arena->offset;
+
+    // Update the arena's offset to reflect the allocated memory block, so that the next allocation
+    // will start after the current block.
     arena->offset += size;
 
     return ptr;

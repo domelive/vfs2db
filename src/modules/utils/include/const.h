@@ -26,7 +26,7 @@
 
 #include <stdint.h>
 
-extern int cache_enabled;
+extern int cache_enabled; /**< Flag to enable or disable caching (default: enabled) */
 
 // =============================================================
 // Utility Macros

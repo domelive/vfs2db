@@ -33,9 +33,11 @@
 #include "logger.h"
 
 /**
- * Query Identifiers
+ * QueryID Enumeration
  *
- * @brief Enumeration of query identifiers used to reference SQL queries.
+ * @brief Enumeration of QueryIDs corresponding to different SQL queries used in the VFS2DB
+ * filesystem. Each QueryID represents a specific SQL query template that can be either static or
+ * dynamic.
  */
 typedef enum {
     QUERY_SELECT_TABLES_NAME,
@@ -51,13 +53,13 @@ typedef enum {
 } QueryID;
 
 /**
- * Get Query String
+ * Initialize Query Manager
  *
- * @brief Retrieves the SQL query string associated with the given QueryID.
+ * @brief Initializes the Query Manager by preparing static SQL statements.
  *
- * @param[in] qid The QueryID for which to retrieve the SQL query string
+ * @param[in] db Pointer to the SQLite database connection
  *
- * @return The SQL query string if found, NULL otherwise
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
 status_t qm_init(sqlite3* db);
 
@@ -103,7 +105,5 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...);
  * @brief Cleans up the Query Manager by finalizing prepared SQL statements.
  */
 void qm_cleanup();
-
-// TODO: variadic function to build a dynamic query
 
 #endif // QUERY_MANAGER_H

@@ -74,6 +74,9 @@ static inline Schema* find_schema_by_name(DbSchema* db_schema, const char* name)
  *
  * @param[in,out] db_schema     Pointer to the DbSchema structure to which the schema will be added
  * @param[in]     table_schema  Pointer to the Schema structure to add
+ *
+ * @todo consider adding the TRY macro to handle error cases, such as memory allocation failure or
+ * duplicate schema name.
  */
 static inline void add_schema(DbSchema* db_schema, Schema* table_schema) {
     Schema* existing_schema = find_schema_by_name(db_schema, table_schema->name);
@@ -122,12 +125,12 @@ static inline Fk* find_fk_by_name(Schema* schema, const char* from) {
 
 /**
  * find_pk_by_name
- * 
+ *
  * @brief Retrieve Primary Key by Name
- * 
+ *
  * @param[in] schema Pointer to the Schema structure containing primary keys
  * @param[in] name   The name of the primary key to retrieve
- * 
+ *
  * @return Pointer to the Pk structure if found, NULL otherwise
  */
 static inline Pk* find_pk_by_name(Schema* schema, const char* name) {
@@ -144,12 +147,12 @@ static inline Pk* find_pk_by_name(Schema* schema, const char* name) {
 
 /**
  * find_attribute_by_name
- * 
+ *
  * @brief Retrieve Attribute by Name
- * 
+ *
  * @param[in] schema Pointer to the Schema structure containing attributes
  * @param[in] name   The name of the attribute to retrieve
- * 
+ *
  * @return Pointer to the Attr structure if found, NULL otherwise
  */
 static inline Attr* find_attribute_by_name(Schema* schema, const char* name) {
@@ -212,12 +215,12 @@ static inline bool is_pk_in_schema(Schema* schema, const char* pk_name) {
 
 /**
  * is_fk_in_schema
- * 
+ *
  * @brief Check if Foreign Key Exists in Schema
- * 
+ *
  * @param[in] schema  Pointer to the Schema structure
  * @param[in] fk_from The 'from' attribute name of the foreign key to check
- * 
+ *
  * @return true if the foreign key exists in the schema, false otherwise
  */
 static inline bool is_fk_in_schema(Schema* schema, const char* fk_from) {
@@ -325,6 +328,7 @@ static inline void free_pk_set(Schema* schema) {
 static inline void free_attr_set(Schema* schema) {
     if (!schema)
         return;
+
     HASH_FOREACH(current_attr, schema->attr_head) {
         HASH_DEL(schema->attr_head, current_attr);
         free(current_attr->name);
@@ -342,6 +346,7 @@ static inline void free_attr_set(Schema* schema) {
 static inline void free_fk_hashmap(Schema* schema) {
     if (!schema)
         return;
+
     HASH_FOREACH(current_fk, schema->fks_head) {
         HASH_DEL(schema->fks_head, current_fk);
         free(current_fk->from);
@@ -353,6 +358,7 @@ static inline void free_fk_hashmap(Schema* schema) {
 
 // TODO: Consider merging free_fk_hashmap and free_schema_hashmap into a single function that can
 // free any hash map, given the appropriate free function for the elements.
+
 /**
  * free_schema_hashmap
  *
@@ -364,6 +370,7 @@ static inline void free_fk_hashmap(Schema* schema) {
 static inline void free_schema_hashmap(DbSchema* schema) {
     if (!schema)
         return;
+
     HASH_FOREACH(current_schema, schema->tables_head) {
         HASH_DEL(schema->tables_head, current_schema);
         free(current_schema);

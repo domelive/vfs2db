@@ -24,17 +24,21 @@
 #ifndef ERRORS_H
 #define ERRORS_H
 
-#include <sqlite3.h>
 #include <errno.h>
+#include <sqlite3.h>
 
 /**
  * Status Codes
  *
  * @brief Enumeration of status codes used throughout the database handler.
+ *
+ * This enumeration includes general status codes (e.g., STATUS_OK, STATUS_ALLOC_ERROR) as well as
+ * specific status codes for SQLite errors (e.g., STATUS_DB_BUSY, STATUS_DB_LOCKED). The status
+ * codes are designed to provide a clear and consistent way to represent the outcome of operations.
  */
 typedef enum status_t {
     STATUS_OK,
-    
+
     STATUS_ALLOC_ERROR,
 
     STATUS_DB_ERROR,
@@ -47,7 +51,7 @@ typedef enum status_t {
     STATUS_DB_CANTOPEN,
     STATUS_DB_PERMISSION,
     STATUS_DB_NOTFOUND,
-    
+
     STATUS_CACHE_FULL,
     STATUS_CACHE_ERROR,
 } status_t;
@@ -88,8 +92,9 @@ static inline status_t sqlite_to_status(int sqlite_code) {
 
 /**
  * Convert status_t to errno code
- * 
+ *
  * @param[in] status The status_t value to convert
+ *
  * @return Corresponding errno code (negative value)
  */
 static inline int status_to_errno(status_t status) {
@@ -118,32 +123,79 @@ static inline int status_to_errno(status_t status) {
     }
 }
 
-#define TRY(call, label, fmt, ...) \
-    do { \
-        if ((status = (call)) != STATUS_OK) { \
-            LOG_ERROR(fmt, ##__VA_ARGS__); \
-            goto label; \
-        } \
-    } while(0);
+/**
+ * TRY Macro
+ *
+ * @brief Macro to simplify error handling by checking the result of a function call and jumping
+ * to a specified label if the result indicates an error.
+ *
+ * @param[in] call   The function call to execute and check for errors
+ * @param[in] label  The label to jump to if an error occurs
+ * @param[in] fmt    The format string for the error message (optional)
+ * @param[in] ...    Additional arguments for the error message (optional)
+ *
+ * This macro evaluates the provided function call and checks if the result is not STATUS_OK.
+ * If an error is detected, it logs an error message using the provided format string and
+ * additional arguments, sets the status variable to the error code, and jumps to the specified
+ * label for cleanup or further error handling.
+ */
+#define TRY(call, label, fmt, ...)                                                                 \
+    do {                                                                                           \
+        if ((status = (call)) != STATUS_OK) {                                                      \
+            LOG_ERROR(fmt, ##__VA_ARGS__);                                                         \
+            goto label;                                                                            \
+        }                                                                                          \
+    } while (0);
 
-#define TRY_NOT_NULL(ptr, label, err_status, fmt, ...) \
-    do { \
-        if (!(ptr)) { \
-            LOG_ERROR(fmt, ##__VA_ARGS__); \
-            status = err_status; \
-            goto label; \
-        } \
-    } while(0);
+/**
+ * TRY_NOT_NULL Macro
+ *
+ * @brief Macro to check if a pointer is not NULL and jump to a specified label if it is NULL.
+ *
+ * @param[in] ptr    The pointer to check for NULL
+ * @param[in] label  The label to jump to if the pointer is NULL
+ * @param[in] err_status The status_t error code to set if the pointer is NULL
+ * @param[in] fmt    The format string for the error message (optional)
+ * @param[in] ...    Additional arguments for the error message (optional)
+ *
+ * This macro checks if the provided pointer is NULL. If it is NULL, it logs an error message
+ * using the provided format string and additional arguments, sets the status variable to the
+ * specified error code, and jumps to the specified label for cleanup or further error handling.
+ */
+#define TRY_NOT_NULL(ptr, label, err_status, fmt, ...)                                             \
+    do {                                                                                           \
+        if (!(ptr)) {                                                                              \
+            LOG_ERROR(fmt, ##__VA_ARGS__);                                                         \
+            status = err_status;                                                                   \
+            goto label;                                                                            \
+        }                                                                                          \
+    } while (0);
 
-#define TRY_SQLITE(call, ok_status, label, fmt, ...) \
-    do { \
-        int call_result = (call); \
-        if (call_result != ok_status) { \
-            LOG_SQLITE_ERROR(db); \
-            status = sqlite_to_status(call_result); \
-            goto label; \
-        } \
-    } while(0);
-
+/**
+ * TRY_SQLITE Macro
+ * @brief Macro to check the result of an SQLite function call and jump to a specified label if the
+ * result is not the expected OK status.
+ *
+ * @param[in] call       The SQLite function call to execute and check for errors
+ * @param[in] ok_status   The expected SQLite status code indicating success (e.g., SQLITE_OK)
+ * @param[in] label      The label to jump to if an error occurs
+ * @param[in] fmt        The format string for the error message (optional)
+ * @param[in] ...      Additional arguments for the error message (optional)
+ *
+ * This macro evaluates the provided SQLite function call and checks if the result is not equal to
+ * the expected OK status. If an error is detected, it logs an error message using the provided
+ * format string and additional arguments, sets the status variable to the corresponding status_t
+ * error code based on the SQLite error code, and jumps to the specified label for cleanup or
+ * further error handling.
+ */
+#define TRY_SQLITE(call, ok_status, label, fmt, ...)                                               \
+    do {                                                                                           \
+        int call_result = (call);                                                                  \
+        if (call_result != ok_status) {                                                            \
+            LOG_SQLITE_ERROR(db);                                                                  \
+            status = sqlite_to_status(call_result);                                                \
+            goto label;                                                                            \
+        }                                                                                          \
+    } while (0);
 
 #endif // ERRORS_H

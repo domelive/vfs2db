@@ -61,6 +61,7 @@ CacheBlock* cache_get(CacheKey* key) {
 
     pthread_mutex_lock(&cache.lock);
 
+    // Look up the cache block in the hash map using the provided key.
     HASH_FIND(hh, cache.map, key, sizeof(CacheKey), blk);
     if (blk) {
         cache_touch(blk);
@@ -90,10 +91,13 @@ static inline void cache_insert_head(CacheBlock* blk) {
     blk->prev = NULL;
     blk->next = cache.lru_head;
 
+    // Update the previous head's prev pointer to the new block, if the head exists.
     if (cache.lru_head)
         cache.lru_head->prev = blk;
     cache.lru_head = blk;
 
+    // If the tail is NULL, it means the cache was previously empty, so we set the tail to the new
+    // block as well.
     if (cache.lru_tail == NULL)
         cache.lru_tail = blk;
 
@@ -122,7 +126,8 @@ void cache_add_block(CacheBlock* blk) {
 
     // Check if the size of the block is greather than BLOCK_SIZE
     if (blk->actual_size > BLOCK_SIZE) {
-        LOG_WARN("Block size (%zu bytes) exceeds BLOCK_SIZE (%d bytes), skipping cache insertion: path='%s', offset=%ld",
+        LOG_WARN("Block size (%zu bytes) exceeds BLOCK_SIZE (%d bytes), skipping cache insertion: "
+                 "path='%s', offset=%ld",
                  blk->actual_size, BLOCK_SIZE, blk->key.query, blk->key.offset);
         pthread_mutex_unlock(&cache.lock);
         return;
@@ -131,6 +136,9 @@ void cache_add_block(CacheBlock* blk) {
     CacheBlock* existing_blk = NULL;
     HASH_FIND(hh, cache.map, &blk->key, sizeof(CacheKey), existing_blk);
 
+    // Check if the block already exists in the cache to avoid duplicates. If a block with the same
+    // key already exists, we skip the insertion to prevent duplicate entries in the cache, which
+    // could lead to inconsistencies and incorrect cache behavior.
     if (existing_blk) {
         LOG_DEBUG("Block already exists in cache, skipping: path='%s', offset=%ld", blk->key.query,
                   blk->key.offset);
@@ -276,6 +284,7 @@ void cache_evict_block(CacheKey* key) {
 void cache_evict_blocks_by_path(const char* path) {
     pthread_mutex_lock(&cache.lock);
 
+    // Iterate through the LRU list and evict blocks that match the specified query path.
     CacheBlock* current = cache.lru_head;
     while (current) {
         CacheBlock* next = current->next;
@@ -300,6 +309,7 @@ void cache_view() {
     pthread_mutex_lock(&cache.lock);
 
     int count = cache_count();
+
     LOG_DEBUG("=== Cache View ===");
     LOG_DEBUG("Blocks: %d/%d (%.1f%% full)", count, CACHE_BLOCKS,
               (float)count / CACHE_BLOCKS * 100);

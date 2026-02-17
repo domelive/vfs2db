@@ -112,9 +112,11 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
 /**
  * VFS2DB Open
  *
- * @brief Opens a file in the VFS2DB filesystem. This function is currently a placeholder and does not perform any actual opening logic, as the filesystem is stateless.
- * The open operation is effectively a no-op in this implementation, as all necessary checks and preparations are handled in the getattr and readdir handlers.
- * 
+ * @brief Opens a file in the VFS2DB filesystem. This function is currently a placeholder and does
+ * not perform any actual opening logic, as the filesystem is stateless. The open operation is
+ * effectively a no-op in this implementation, as all necessary checks and preparations are handled
+ * in the getattr and readdir handlers.
+ *
  * @param[in] path    The file path to open
  * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
  * @return 0 on success, negative error code on failure
@@ -155,17 +157,17 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
 
 /**
  * VFS2DB Truncate
- * 
- * @brief Truncates a file in the VFS2DB filesystem, which corresponds to resizing an attribute value
- * in the database. This function is currently a placeholder and not implemented yet.
- * 
+ *
+ * @brief Truncates a file in the VFS2DB filesystem, which corresponds to resizing an attribute
+ * value in the database. This function is currently a placeholder and not implemented yet.
+ *
  * @param[in] path    The file path to truncate
  * @param[in] size    The new size of the file
  * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
- * 
+ *
  * @return 0 on success, negative error code on failure
  */
-int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi); 
+int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi);
 
 /**
  * VFS2DB Create

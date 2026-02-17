@@ -40,9 +40,11 @@ typedef struct query_t {
 } query_t;
 
 /**
- * Query String Store
+ * Query Store
  *
- * @brief Array of SQL query strings indexed by QueryID.
+ * @brief Array of Query structures representing the SQL queries used in the VFS2DB filesystem.
+ * Static queries are prepared at initialization and stored in the `stmt` field, while dynamic
+ * queries are formatted and prepared on demand.
  */
 static query_t query_store[] = {
     [QUERY_SELECT_TABLES_NAME] = {"SELECT "
@@ -119,6 +121,9 @@ status_t qm_init(sqlite3* db) {
     int static_count  = 0;
     int dynamic_count = 0;
 
+    // Prepare static queries and store the prepared statements in the query store for later use.
+    // Dynamic queries will be prepared on demand when requested, so they are not prepared at
+    // initialization.
     for (int i = 0; i < QUERY_COUNT; i++) {
         if (!query_store[i].is_dynamic) {
             LOG_TRACE("Preparing static query %d: %.50s...", i, query_store[i].sql);
@@ -173,6 +178,8 @@ sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
         return NULL;
     }
 
+    // Static queries should have their statements prepared at initialization and stored in the
+    // query store. If the query is dynamic, it should not be retrieved using this function.
     if (query_store[qid].is_dynamic) {
         LOG_ERROR("QueryID %d is dynamic, use qm_build_dynamic_query_statement", qid);
         return NULL;
@@ -180,6 +187,9 @@ sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
 
     sqlite3_stmt* s = query_store[qid].stmt;
 
+    // Reset the statement to clear any previous bindings and state before returning it for use.
+    // This ensures that the statement is in a clean state when retrieved for execution, preventing
+    // issues from previous executions from affecting the current use of the statement.
     sqlite3_reset(s);
     sqlite3_clear_bindings(s);
 
@@ -214,6 +224,9 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
     const char* tpl = query_store[qid].sql;
     char        buffer[2048];
 
+    // Format the SQL query string using the provided variadic arguments. This allows us to create
+    // dynamic SQL queries based on templates defined in the query store, which can be used for
+    // operations that require variable components in the SQL, such as table names or column names.
     va_list args;
     va_start(args, qid);
     vsnprintf(buffer, sizeof(buffer), tpl, args);
@@ -222,6 +235,8 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
     LOG_TRACE("Built dynamic query: %.100s%s", buffer, strlen(buffer) > 100 ? "..." : "");
 
     sqlite3_stmt* s;
+
+    // Prepare the formatted SQL query string to create a SQLite statement that can be executed.
     if (sqlite3_prepare_v2(db, buffer, -1, &s, NULL) != SQLITE_OK) {
         LOG_ERROR("Failed to prepare dynamic query %d: %s", qid, sqlite3_errmsg(db));
         return NULL;

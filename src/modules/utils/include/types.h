@@ -31,12 +31,34 @@
 // Metadata Structures
 // =============================================================
 
+/**
+ * @brief Structure representing a Primary Key attribute in a database schema.
+ *
+ * Includes the following fields:
+ * - `name`: The name of the primary key attribute.
+ * - `sqlite_type`: The SQLite data type of the primary key attribute.
+ * - `hh`: UTHash handle for hash table operations.
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
+ */
 typedef struct Pk {
     char*          name;
     int            sqlite_type;
     UT_hash_handle hh;
 } Pk;
 
+/**
+ * @brief Structure representing a non-primary key attribute in a database schema.
+ *
+ * Includes the following fields:
+ * - `name`: The name of the attribute.
+ * - `sqlite_type`: The SQLite data type of the attribute.
+ * - `hh`: UTHash handle for hash table operations.
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
+ */
 typedef struct Attr {
     char*          name;
     int            sqlite_type;
@@ -56,25 +78,25 @@ typedef struct Attr {
  * memory leaks.
  */
 typedef struct Fk {
-    char* from;
-    char* table;
-    char* to;
-    int   sqlite_type;
+    char*          from;
+    char*          table;
+    char*          to;
+    int            sqlite_type;
     UT_hash_handle hh;
 } Fk;
 
 /**
- * @brief Structure representing the schema of a database table.
+ * @brief Structure representing a database table schema.
  *
  * Includes the following fields:
- * - `name`:    The name of the table and also the key for the schema.
- * - `pk`:      Set of strings representing the names of primary key attributes.
- * - `attr`:    Set of strings representing the names of other attributes.
- * - `fks`:     Hashmap of pointers to `Fk` structures representing foreign key relationships.
- * - `n_pk`:    Number of primary key attributes.
- * - `n_attr`:  Number of other attributes.
- * - `n_fks`:   Number of foreign key relationships.
- * - `hh`:      UTHash handle for hash table operations.
+ * - `name`: The name of the table.
+ * - `pk_head`: Pointer to the head of a hashmap of `Pk` structures representing primary key
+ * attributes.
+ * - `attr_head`: Pointer to the head of a hashmap of `Attr` structures representing non-primary
+ * key attributes.
+ * - `fks_head`: Pointer to the head of a hashmap of `Fk` structures representing foreign key
+ * relationships.
+ * - `hh`: UTHash handle for hash table operations.
  *
  * @note All string fields are dynamically allocated and should be freed appropriately to avoid
  * memory leaks.
@@ -99,7 +121,9 @@ typedef struct Schema {
  * Includes the following fields:
  * - `tables_head`: Pointer to the head of a hashmap of `Schema` structures representing all
  * tables in the database.
- *- `db_name`: The name of the database.
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
  */
 typedef struct DbSchema {
     Schema* tables_head;

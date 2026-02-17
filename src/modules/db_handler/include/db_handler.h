@@ -109,6 +109,23 @@ status_t init_schema(Schema* schema);
  */
 status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes);
 
+/**
+ * Get Attribute Bytes
+ * @todo Handle error cases properly
+ *
+ * @brief Retrieves the bytes of a specific attribute for a given record in a table.
+ *
+ * This function executes a SQL query to fetch the attribute value
+ * and returns it as a dynamically allocated string.
+ *
+ * @param[in]  toks  Pointer to tokens structure containing table, record, and attribute
+ * information
+ * @param[out] bytes Pointer to a char pointer where the attribute value will be stored
+ * @param[out] size  Pointer to a size_t variable where the size of the attribute value will be
+ * stored
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
 status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size);
 
 /**
@@ -166,6 +183,17 @@ status_t get_attribute_type(struct tokens* toks, int* type);
  */
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset);
 
+/**
+ * Set Attribute to NULL
+ * @todo Handle error cases properly
+ *
+ * @brief Sets a specific attribute value to NULL for a given record in a table.
+ *
+ * This function executes a SQL query to update the specified attribute value
+ * to NULL in the database. It also evicts the corresponding cache block if it exists.
+ *
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ */
 status_t set_attribute_null(struct tokens* toks);
 
 /**
