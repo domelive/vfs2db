@@ -35,7 +35,7 @@ static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficien
  *
  * @return Pointer to the thread-local Arena
  */
-void ensure_arena_init() {
+static inline void ensure_arena_init() {
     if (!arena) {
         LOG_DEBUG("Creating thread-local arena");
 
@@ -833,7 +833,8 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     LOG_DEBUG("readlink: FK %s -> %s(%s)", fk->from, fk->table, fk->to);
 
     int n_same_fks = 0;
-    Fk* fks[count_fks(table)];
+    Fk** fks = NULL;
+    TRY_NOT_NULL(fks = arena_calloc(arena, count_fks(table), sizeof(Fk*)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate fks array for table '%s'", table->name);
 
     // Get all fks with the same 'table' value
     HASH_FOREACH(current_fk, table->fks_head) {
@@ -842,7 +843,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
         }
     }
 
-    char* fk_values[n_same_fks];
+    char** fk_values = arena_calloc(arena, n_same_fks, sizeof(char*));
 
     LOG_TRACE("readlink: found %d FKs to table '%s'", n_same_fks, fk->table);
 

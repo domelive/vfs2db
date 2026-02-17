@@ -34,7 +34,7 @@ static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficien
  *
  * @return Pointer to the thread-local Arena
  */
-void ensure_arena_init() {
+static inline void ensure_arena_init() {
     if (!arena) {
         LOG_DEBUG("Creating thread-local arena");
 
@@ -123,8 +123,6 @@ key_alloc_error:
  * @return 0 on success, -1 on failure
  */
 status_t init_db_schema(DbSchema* db_schema) {
-    ensure_arena_init();
-
     status_t status = STATUS_OK;
 
     LOG_DEBUG("Initializing database schema...");
@@ -136,9 +134,9 @@ status_t init_db_schema(DbSchema* db_schema) {
         const char* name = (const char*)sqlite3_column_text(pstmt, 0);
 
         Schema* new_schema;
-        TRY_NOT_NULL(new_schema = arena_calloc(arena, 1, sizeof(Schema)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate Schema for table '%s'", name);
+        TRY_NOT_NULL(new_schema = calloc(1, sizeof(Schema)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate Schema for table '%s'", name);
 
-        TRY_NOT_NULL(new_schema->name = arena_strdup(arena, name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate table name '%s' for schema", name);
+        TRY_NOT_NULL(new_schema->name = strdup(name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate table name '%s' for schema", name);
         add_schema(db_schema, new_schema);
 
         LOG_TRACE("Found table: %s", name);
@@ -173,8 +171,6 @@ cleanup:
  * @return 0 on success, -1 on failure
  */
 status_t init_schema(Schema* schema) {
-    ensure_arena_init();
-    
     status_t status = STATUS_OK;
 
     LOG_DEBUG("Initializing schema for table: %s", schema->name);
@@ -191,15 +187,18 @@ status_t init_schema(Schema* schema) {
         const bool  is_pk           = sqlite3_column_int(stmt, 2);
         const char* fk_table        = sqlite3_column_text(stmt, 3);
         const char* fk_column_name  = sqlite3_column_text(stmt, 4);
+        LOG_TRACE("Column: %s, Type: %s, PK: %d, FK Table: %s, FK Column: %s", column_name, column_type_str, is_pk, fk_table ? fk_table : "NULL", fk_column_name ? fk_column_name : "NULL");
         // Check if primary key
         if (is_pk) {
+            LOG_TRACE("Column '%s' is a primary key", column_name);
             // Add to schema pk field
             Pk* pk;
-            TRY_NOT_NULL(pk = arena_alloc(arena, sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate PK for column '%s' in table '%s'", column_name, schema->name);
+            TRY_NOT_NULL(pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate PK for column '%s' in table '%s'", column_name, schema->name);
 
-            TRY_NOT_NULL(pk->name = arena_strdup(arena, column_name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate column name '%s' for PK in table '%s'", column_name, schema->name);
+            TRY_NOT_NULL(pk->name = strdup(column_name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate column name '%s' for PK in table '%s'", column_name, schema->name);
 
             pk->sqlite_type = parse_sqlite_type(column_type_str);
+            LOG_TRACE("Parsed SQLite type for PK '%s': %d", column_name, pk->sqlite_type);
             add_pk_to_schema(schema, pk);
             
             LOG_TRACE("  PK: %s", column_name);
@@ -207,13 +206,14 @@ status_t init_schema(Schema* schema) {
         }
         // Check if foreign key
         else if (fk_table != NULL) {
+            LOG_TRACE("Column '%s' is a foreign key referencing '%s(%s)'", column_name, fk_table, fk_column_name);
             // Add fk to schema
             Fk* fk;
-            TRY_NOT_NULL(fk = arena_alloc(arena, sizeof(Fk)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate FK for column '%s' in table '%s'", column_name, schema->name);
+            TRY_NOT_NULL(fk = malloc(sizeof(Fk)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate FK for column '%s' in table '%s'", column_name, schema->name);
 
-            TRY_NOT_NULL(fk->from = arena_strdup(arena, column_name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate column name '%s' for FK in table '%s'", column_name, schema->name);
-            TRY_NOT_NULL(fk->table = arena_strdup(arena, fk_table), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate FK table name '%s' for FK in table '%s'", fk_table, schema->name);
-            TRY_NOT_NULL(fk->to = arena_strdup(arena, fk_column_name), cleanup, STATUS_ALLOC_ERROR,  "Failed to duplicate FK column name '%s' for FK in table '%s'", fk_column_name, schema->name);
+            TRY_NOT_NULL(fk->from = strdup(column_name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate column name '%s' for FK in table '%s'", column_name, schema->name);
+            TRY_NOT_NULL(fk->table = strdup(fk_table), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate FK table name '%s' for FK in table '%s'", fk_table, schema->name);
+            TRY_NOT_NULL(fk->to = strdup(fk_column_name), cleanup, STATUS_ALLOC_ERROR,  "Failed to duplicate FK column name '%s' for FK in table '%s'", fk_column_name, schema->name);
 
             fk->sqlite_type = parse_sqlite_type(column_type_str);
             add_fk_to_schema(schema, fk);
@@ -223,11 +223,12 @@ status_t init_schema(Schema* schema) {
         }
         // Normal attribute
         else {
+            LOG_TRACE("Column '%s' is a normal attribute", column_name);
             // Add to schema attr field
             Attr* attr;
-            TRY_NOT_NULL(attr = arena_alloc(arena, sizeof(Attr)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate Attr for column '%s' in table '%s'", column_name, schema->name);
+            TRY_NOT_NULL(attr = malloc(sizeof(Attr)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate Attr for column '%s' in table '%s'", column_name, schema->name);
 
-            TRY_NOT_NULL(attr->name = arena_strdup(arena, column_name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate column name '%s' for Attr in table '%s'", column_name, schema->name);
+            TRY_NOT_NULL(attr->name = strdup(column_name), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate column name '%s' for Attr in table '%s'", column_name, schema->name);
             
             attr->sqlite_type = parse_sqlite_type(column_type_str);
             add_attribute_to_schema(schema, attr);
@@ -288,8 +289,6 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
         status = STATUS_DB_ERROR;
         goto cleanup;
     }
-
-    sqlite3_finalize(stmt);
 
 cleanup:
     if (stmt) sqlite3_finalize(stmt);
@@ -529,7 +528,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
             TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup, "Failed to execute blob expansion for '%s/%s/%s'", toks->table, toks->record, toks->attribute);
 
-            sqlite3_finalize(stmt);
             LOG_DEBUG("Blob expanded successfully to %zu bytes", end_of_write);
         }
 
@@ -572,7 +570,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
         int changes = sqlite3_changes(db);
         LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
-        sqlite3_finalize(stmt);
     }
 
     if (cache_enabled) {
@@ -623,7 +620,6 @@ status_t set_attribute_null(struct tokens* toks) {
 
     int changes = sqlite3_changes(db);
     LOG_DEBUG("Attribute set to NULL successfully, %d rows affected", changes);
-    sqlite3_finalize(stmt);
 
     if (cache_enabled) {
         // Evict the corresponding cache blocks, if exists
@@ -690,7 +686,7 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     int record_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char* rowid       = (const char*)sqlite3_column_text(stmt, 0);
-        records[record_count++] = strdup(rowid);
+        records[record_count++] = arena_strdup(arena, rowid);
 
         if (record_count >= MAX_SIZE) {
             LOG_WARN("Table '%s' has more than %d rows, truncating", table, MAX_SIZE);
@@ -709,14 +705,6 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
         char** records_copy;
 
         TRY_NOT_NULL(records_copy = arena_alloc(arena, record_count * sizeof(char*)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate records copy for cache of table '%s'", table);
-
-        if (!records_copy) {
-            LOG_WARN("Failed to allocate records copy for cache");
-            free(blk);
-            free(key);
-            sqlite3_finalize(stmt);
-            return STATUS_OK;
-        }
 
         for (int i = 0; i < record_count; i++) {
             TRY_NOT_NULL(records_copy[i] = arena_strdup(arena, records[i]), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate record '%s' for cache of table '%s'", records[i], table);
@@ -779,6 +767,6 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
     LOG_DEBUG("Found rowid=%d for FK lookup in table '%s'", *rowid, table);
 
 cleanup:
-    sqlite3_finalize(pstmt);
+    if (pstmt) sqlite3_finalize(pstmt);
     return STATUS_OK;
 }
