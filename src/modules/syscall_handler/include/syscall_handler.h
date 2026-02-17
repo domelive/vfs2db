@@ -110,6 +110,18 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
                    struct fuse_file_info* fi, enum fuse_readdir_flags flags);
 
 /**
+ * VFS2DB Open
+ *
+ * @brief Opens a file in the VFS2DB filesystem. This function is currently a placeholder and does not perform any actual opening logic, as the filesystem is stateless.
+ * The open operation is effectively a no-op in this implementation, as all necessary checks and preparations are handled in the getattr and readdir handlers.
+ * 
+ * @param[in] path    The file path to open
+ * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_open(const char* path, struct fuse_file_info* fi);
+
+/**
  * VFS2DB Read
  *
  * @brief Reads data from a file in the VFS2DB filesystem, retrieving the value of an attribute.
@@ -167,8 +179,7 @@ int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi);
  *
  * @return 0 on success, negative error code on failure
  */
-int
-vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi);
+int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi);
 
 /**
  * VFS2DB Readlink

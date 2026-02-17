@@ -273,6 +273,7 @@ void vfs2db_destroy(void* private_data) {
  */
 int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi) {
     (void)fi;
+    status_t status = STATUS_OK;
 
     LOG_FUSE_ENTER("getattr", path);
 
@@ -336,18 +337,16 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
         }
 
         size_t attr_size;
-        if (get_attribute_size(toks, &attr_size) == STATUS_DB_ERROR) {
-            LOG_ERROR("Failed to get attribute size for %s", path);
-            LOG_FUSE_EXIT("getattr", -EIO);
-            return -EIO;
-        }
+        TRY(get_attribute_size(toks, &attr_size), cleanup, "Failed to get attribute size for %s", path);
 
         st->st_size = attr_size;
         LOG_TRACE("getattr: size=%zu", attr_size);
     }
 
-    LOG_FUSE_EXIT("getattr", 0);
-    return 0;
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("getattr", code);
+    return code;
 }
 
 /**
@@ -363,6 +362,8 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
  * @return Size of the attribute value on success, negative error code on failure
  */
 int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size) {
+    status_t status = STATUS_OK;
+
     LOG_FUSE_ENTER("getxattr", path);
     LOG_TRACE("getxattr: name=%s, bufsize=%zu", name, size);
 
@@ -387,6 +388,7 @@ int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size
 
     const char* t_str;
     int         attr_type;
+
     if (get_attribute_type(toks, &attr_type) != STATUS_OK) {
         LOG_ERROR("getxattr: failed to get attribute type for %s", path);
         return -EIO;
@@ -447,6 +449,8 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     (void)fi;
     (void)flags;
 
+    status_t status = STATUS_OK;
+
     LOG_FUSE_ENTER("readdir", path);
 
     ensure_arena_init();
@@ -499,10 +503,7 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
         char* record_list[MAX_SIZE];
         int   n_records;
 
-        if (get_table_rowids(toks->table, record_list, &n_records) == STATUS_DB_ERROR) {
-            LOG_ERROR("Failed to get rowids for table '%s'", toks->table);
-            break;
-        }
+        TRY(get_table_rowids(toks->table, record_list, &n_records), cleanup, "Failed to get rowids for table '%s'", toks->table);
 
         for (int i = 0; i < n_records; i++) {
             filler(buffer, record_list[i], NULL, 0, FUSE_FILL_DIR_DEFAULTS);
@@ -515,11 +516,8 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     case 2: {
         LOG_DEBUG("readdir: listing attributes for %s/%s", toks->table, toks->record);
 
-        Schema* table = find_schema_by_name(db_schema, toks->table);
-        if (!table) {
-            LOG_ERROR("Table not found: %s", toks->table);
-            break;
-        }
+        Schema* table;
+        TRY_NOT_NULL(table = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR, "Table not found in schema: %s", toks->table);
 
         char file[MAX_SIZE];
         int  count = 0;
@@ -554,7 +552,71 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
         break;
     }
 
-    LOG_FUSE_EXIT("readdir", 0);
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("readdir", code);
+    return code;
+}
+
+/**
+ * VFS2DB Open
+ * 
+ * @brief Opens a file in the VFS2DB filesystem. This function is called when a file is opened.
+ *        It checks the validity of the path and prepares any necessary data structures for subsequent read/write operations.
+ * 
+ * @param[in] path    The file path to open
+ * @param[in] fi      Pointer to fuse_file_info structure containing flags and other info about
+ * 
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_open(const char* path, struct fuse_file_info* fi) {
+    status_t status = STATUS_OK;
+
+    LOG_FUSE_ENTER("open", path);
+
+    ensure_arena_init();
+
+    // Get toks
+    char* noext_path = remove_extension(path);
+    if (!noext_path) {
+        LOG_FUSE_EXIT("open", -ENOMEM);
+        return -ENOMEM;
+    }
+
+    struct tokens* toks = tokenize_path(noext_path);
+    if (!toks) {
+        LOG_FUSE_EXIT("open", -ENOMEM);
+        return -ENOMEM;
+    }
+
+    // Check if path is correct. We must have a file.
+    if (!toks->table || !toks->attribute || !toks->record) {
+        LOG_ERROR("open: invalid path '%s', missing table, record, or attribute", path);
+        LOG_FUSE_EXIT("open", -ENOENT);
+        return -ENOENT;
+    }
+
+    // Look at flags
+    int flags = fi->flags;
+
+    // If file doesn't exist and O_CREAT isn't specified, error
+    // /metrics/123/attribute.vfs2db
+    // if (record_in_db(toks)) {
+
+    // } else {
+
+    // }
+
+
+    // If O_CREAT
+    if (flags & O_CREAT) {
+        
+    }
+    // If O_TRUNC
+    if (flags & O_TRUNC) {
+        
+    }
+    
     return 0;
 }
 
@@ -680,6 +742,8 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
  * @return 0 on success, negative error code on failure
  */
 int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
+    status_t status = STATUS_OK;
+
     LOG_FUSE_ENTER("truncate", path);
 
     ensure_arena_init();
@@ -691,17 +755,15 @@ int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
     }
 
     if (size == 0) {
-        if (set_attribute_null(toks) == STATUS_DB_ERROR) {
-            LOG_ERROR("truncate: failed to set attribute to NULL");
-            LOG_FUSE_EXIT("truncate", -EIO);
-            return -EIO;
-        }
+        TRY(set_attribute_null(toks), cleanup, "Failed to set attribute to NULL for %s", path);
     } else {        
         LOG_WARN("truncate: truncation to non-zero size is not supported, setting attribute to NULL instead");
     }
 
-    LOG_FUSE_EXIT("truncate", 0);
-    return 0;
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("truncate", code);
+    return code;
 }
 
 /**
@@ -743,8 +805,10 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
  */
 int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     LOG_FUSE_ENTER("readlink", path);
-
+    
     ensure_arena_init();
+
+    status_t status = STATUS_OK;
 
     char* noext_path = remove_extension(path);
     if (!noext_path) {
@@ -757,60 +821,45 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
         LOG_FUSE_EXIT("readlink", -ENOMEM);
         return -ENOMEM;
     }
-
+    
     // Get schema
-    Schema* table = find_schema_by_name(db_schema, toks->table);
-    if (!table) {
-        LOG_ERROR("readlink: table not found: %s", toks->table);
-        LOG_FUSE_EXIT("readlink", -ENOENT);
-        return -ENOENT;
-    }
-
+    Schema* table;
+    TRY_NOT_NULL(table = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR, "Table not found in schema: %s", toks->table);
+        
     // Get fk
-    Fk* fk = find_fk_by_name(table, toks->attribute);
-    if (!fk) {
-        LOG_ERROR("readlink: FK not found: %s.%s", toks->table, toks->attribute);
-        LOG_FUSE_EXIT("readlink", -ENOENT);
-        return -ENOENT;
-    }
-
+    Fk* fk;
+    TRY_NOT_NULL(fk = find_fk_by_name(table, toks->attribute), cleanup, STATUS_DB_ERROR, "FK not found for attribute '%s' in table '%s'", toks->attribute, toks->table);
+    
     LOG_DEBUG("readlink: FK %s -> %s(%s)", fk->from, fk->table, fk->to);
 
-    // Get all fks with the same 'table' value
-    Fk* fks[count_fks(table)];
     int n_same_fks = 0;
+    Fk* fks[count_fks(table)];
 
+    // Get all fks with the same 'table' value
     HASH_FOREACH(current_fk, table->fks_head) {
         if (strncmp(fk->table, current_fk->table, strlen(fk->table)) == 0) {
             fks[n_same_fks++] = current_fk;
         }
     }
 
+    char* fk_values[n_same_fks];
+
     LOG_TRACE("readlink: found %d FKs to table '%s'", n_same_fks, fk->table);
 
     // Get values of the fks
-    char* fk_values[n_same_fks];
     for (int i = 0; i < n_same_fks; i++) {
         char*         value   = NULL;
         struct tokens fk_toks = {
             .table = toks->table, .record = toks->record, .attribute = fks[i]->from};
 
-        if (get_attribute_chunk_bytes(&fk_toks, 0, &value) != STATUS_OK) {
-            LOG_ERROR("readlink: failed to get FK value for %s", fks[i]->from);
-            LOG_FUSE_EXIT("readlink", -EIO);
-            return -EIO;
-        }
+        TRY(get_attribute_chunk_bytes(&fk_toks, 0, &value), cleanup, "Failed to get FK value for %s.%s", fk_toks.table, fk_toks.attribute);
 
         fk_values[i] = value;
         LOG_TRACE("readlink: FK value %s=%s", fks[i]->from, value);
     }
 
     int row_id;
-    if (get_rowid_from_pks(fk->table, fks, fk_values, n_same_fks, &row_id) != STATUS_OK) {
-        LOG_ERROR("readlink: failed to resolve FK target");
-        LOG_FUSE_EXIT("readlink", -EIO);
-        return -EIO;
-    }
+    TRY(get_rowid_from_pks(fk->table, fks, fk_values, n_same_fks, &row_id), cleanup, "Failed to resolve FK target for %s.%s", toks->table, toks->attribute);
 
     LOG_DEBUG("readlink: resolved to %s/%d/%s", fk->table, row_id, fk->to);
 
@@ -818,7 +867,9 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     snprintf(buffer, size, "../../%s/%d/%s.vfs2db", fk->table, row_id, fk->to);
 
     LOG_DEBUG("readlink: target=%s", buffer);
-    LOG_FUSE_EXIT("readlink", 0);
 
-    return 0;
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("readlink", code);
+    return code;
 }
