@@ -13,4 +13,4 @@ if [ $? -ne 0 ]; then
 fi
 
 mkdir -p /tmp/test
-./src/vfs2db -f -o db=../massive_legend.db -o log=off -o cache_enabled=1 /tmp/test 
+./src/vfs2db -f -o db=../massive_legend.db -o log=trace -o cache_enabled=1 /tmp/test 

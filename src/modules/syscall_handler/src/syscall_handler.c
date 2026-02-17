@@ -179,14 +179,6 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
         return NULL;
     }
 
-    char* db_name                = strdup(db_path);
-    // get rid of the ../ prefix and the .vfs2db suffix
-    char* db_name_start          = strrchr(db_name, '/') ? strrchr(db_name, '/') + 1 : db_name;
-    char* db_name_noext          = strrchr(db_name_start, '.') ? strrchr(db_name_start, '.') : db_name_start;
-    *db_name_noext               = 0;
-    db_schema->db_name           = db_name_start;
-    LOG_INFO("Database name: %s", db_schema->db_name);
-
     if (init_db_schema(db_schema) != STATUS_OK) {
         LOG_FATAL("Failed to initialize database schema");
         free(db_schema);

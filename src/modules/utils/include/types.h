@@ -103,7 +103,6 @@ typedef struct Schema {
  */
 typedef struct DbSchema {
     Schema* tables_head;
-    char*   db_name;
 } DbSchema;
 
 // =============================================================
