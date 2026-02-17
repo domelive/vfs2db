@@ -33,6 +33,7 @@
 
 typedef struct Pk {
     char*          name;
+    int            sqlite_type;
     UT_hash_handle hh;
 } Pk;
 
@@ -58,7 +59,7 @@ typedef struct Fk {
     char* from;
     char* table;
     char* to;
-
+    int   sqlite_type;
     UT_hash_handle hh;
 } Fk;
 

@@ -118,13 +118,19 @@ int cache_count() { return HASH_COUNT(cache.map); }
  * recently accessed.
  */
 void cache_add_block(CacheBlock* blk) {
-    // P2 deve aspettare che P1 esca da cache_get
     pthread_mutex_lock(&cache.lock);
+
+    // Check if the size of the block is greather than BLOCK_SIZE
+    if (blk->actual_size > BLOCK_SIZE) {
+        LOG_WARN("Block size (%zu bytes) exceeds BLOCK_SIZE (%d bytes), skipping cache insertion: path='%s', offset=%ld",
+                 blk->actual_size, BLOCK_SIZE, blk->key.query, blk->key.offset);
+        pthread_mutex_unlock(&cache.lock);
+        return;
+    }
 
     CacheBlock* existing_blk = NULL;
     HASH_FIND(hh, cache.map, &blk->key, sizeof(CacheKey), existing_blk);
 
-    // P1 in cache_get
     if (existing_blk) {
         LOG_DEBUG("Block already exists in cache, skipping: path='%s', offset=%ld", blk->key.query,
                   blk->key.offset);

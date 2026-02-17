@@ -121,6 +121,50 @@ static inline Fk* find_fk_by_name(Schema* schema, const char* from) {
 }
 
 /**
+ * find_pk_by_name
+ * 
+ * @brief Retrieve Primary Key by Name
+ * 
+ * @param[in] schema Pointer to the Schema structure containing primary keys
+ * @param[in] name   The name of the primary key to retrieve
+ * 
+ * @return Pointer to the Pk structure if found, NULL otherwise
+ */
+static inline Pk* find_pk_by_name(Schema* schema, const char* name) {
+    if (!name) {
+        LOG_TRACE("find_pk_by_name: 'name' parameter is NULL");
+        return NULL;
+    }
+
+    Pk* pk;
+    HASH_FIND_STR(schema->pk_head, name, pk);
+
+    return pk;
+}
+
+/**
+ * find_attribute_by_name
+ * 
+ * @brief Retrieve Attribute by Name
+ * 
+ * @param[in] schema Pointer to the Schema structure containing attributes
+ * @param[in] name   The name of the attribute to retrieve
+ * 
+ * @return Pointer to the Attr structure if found, NULL otherwise
+ */
+static inline Attr* find_attribute_by_name(Schema* schema, const char* name) {
+    if (!name) {
+        LOG_TRACE("find_attribute_by_name: 'name' parameter is NULL");
+        return NULL;
+    }
+
+    Attr* attr;
+    HASH_FIND_STR(schema->attr_head, name, attr);
+
+    return attr;
+}
+
+/**
  * add_fk
  *
  * @brief Add Foreign Key to Schema
@@ -164,6 +208,22 @@ static inline bool is_pk_in_schema(Schema* schema, const char* pk_name) {
     Pk* pk;
     HASH_FIND_STR(schema->pk_head, pk_name, pk);
     return (pk != NULL);
+}
+
+/**
+ * is_fk_in_schema
+ * 
+ * @brief Check if Foreign Key Exists in Schema
+ * 
+ * @param[in] schema  Pointer to the Schema structure
+ * @param[in] fk_from The 'from' attribute name of the foreign key to check
+ * 
+ * @return true if the foreign key exists in the schema, false otherwise
+ */
+static inline bool is_fk_in_schema(Schema* schema, const char* fk_from) {
+    Fk* fk;
+    HASH_FIND_STR(schema->fks_head, fk_from, fk);
+    return (fk != NULL);
 }
 
 /**

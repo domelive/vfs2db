@@ -580,10 +580,6 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
 
     ensure_arena_init();
 
-    size_t path_len = strlen(path);
-    if (path_len < 7)
-        return -1; // Safety check
-
     char* noext_path = remove_extension(path);
     if (!noext_path) {
         LOG_FUSE_EXIT("read", -ENOMEM);
@@ -611,7 +607,6 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
         return 0;
     }
 
-    // Let's use the cache
     if (get_attribute_chunk_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute bytes");
         LOG_FUSE_EXIT("read", -EIO);

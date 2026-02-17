@@ -177,6 +177,7 @@ status_t init_schema(Schema* schema) {
             }
 
             pk->name = strdup(column_name);
+            pk->sqlite_type = parse_sqlite_type(column_type_str);
             add_pk_to_schema(schema, pk);
 
             LOG_TRACE("  PK: %s", column_name);
@@ -195,6 +196,7 @@ status_t init_schema(Schema* schema) {
             fk->from  = strdup(column_name);
             fk->table = strdup(fk_table);
             fk->to    = strdup(fk_column_name);
+            fk->sqlite_type = parse_sqlite_type(column_type_str);
             add_fk_to_schema(schema, fk);
 
             LOG_TRACE("  FK: %s -> %s(%s)", column_name, fk_table, fk_column_name);
@@ -426,18 +428,32 @@ status_t get_attribute_type(struct tokens* toks, int* type) {
         return STATUS_DB_ERROR;
     }
 
-    Attr* attr = NULL;
-    HASH_FIND_STR(table_schema->attr_head, toks->attribute, attr);
-    if (!attr) {
-        LOG_ERROR("Attribute '%s' not found in table '%s'", toks->attribute, toks->table);
-        return STATUS_DB_ERROR;
+    void* attribute;
+    
+    attribute = find_fk_by_name(table_schema, toks->attribute);
+    if (attribute) {
+        Fk* attr = (Fk*) attribute;
+        *type = attr->sqlite_type;
+        return STATUS_OK;
     }
 
-    *type = attr->sqlite_type;
-    LOG_TRACE("Attribute type for '%s/%s/%s': %d", toks->table, toks->record, toks->attribute,
-              *type);
+    attribute = find_pk_by_name(table_schema, toks->attribute);
+    if (attribute) {
+        Pk* attr = (Pk*) attribute;
+        *type = attr->sqlite_type;
+        return STATUS_OK;
+    }
 
-    return STATUS_OK;
+    attribute = find_attribute_by_name(table_schema, toks->attribute);
+    if (attribute) {
+        Attr* attr = (Attr*) attribute;
+        *type = attr->sqlite_type;
+        LOG_TRACE("Attribute type for '%s/%s/%s': %d", toks->table, toks->record, toks->attribute,
+                *type);
+        return STATUS_OK;
+    }
+
+    return STATUS_DB_ERROR;
 }
 
 static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int type) {

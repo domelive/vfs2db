@@ -166,8 +166,6 @@ status_t get_attribute_type(struct tokens* toks, int* type);
  */
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset);
 
-
-
 status_t set_attribute_null(struct tokens* toks);
 
 /**
