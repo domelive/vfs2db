@@ -219,6 +219,8 @@ void cache_evict() {
         free(to_evict->data);
     free(to_evict);
 
+    cache.evictions++;
+
     LOG_TRACE("Eviction complete. Total evictions: %lu", cache.evictions);
 }
 
@@ -235,7 +237,6 @@ void cache_evict_block(CacheKey* key) {
     if (!blk) {
         LOG_TRACE("No block found to evict for key: path='%s', offset=%ld", key->query,
                   key->offset);
-        pthread_mutex_unlock(&cache.lock);
         return;
     }
 

@@ -180,9 +180,13 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     }
 
     char* db_name                = strdup(db_path);
-    db_name[strlen(db_path) - 3] = 0;
-    db_name += 3;
-    db_schema->db_name = db_name;
+    // get rid of the ../ prefix and the .vfs2db suffix
+    char* db_name_start          = strrchr(db_name, '/') ? strrchr(db_name, '/') + 1 : db_name;
+    char* db_name_noext          = strrchr(db_name_start, '.') ? strrchr(db_name_start, '.') : db_name_start;
+    *db_name_noext               = 0;
+    db_schema->db_name           = db_name_start;
+    LOG_INFO("Database name: %s", db_schema->db_name);
+
     if (init_db_schema(db_schema) != STATUS_OK) {
         LOG_FATAL("Failed to initialize database schema");
         free(db_schema);
@@ -298,6 +302,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
         st->st_atime = st->st_mtime = time(NULL);
 
         LOG_TRACE("getattr: %s is a directory", path);
+        
         LOG_FUSE_EXIT("getattr", 0);
     } else {
         char* noext_path = remove_extension(path);
@@ -748,7 +753,13 @@ int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
 
     ensure_arena_init();
 
-    struct tokens* toks = tokenize_path(path);
+    char* noext_path = remove_extension(path);
+    if (!noext_path) {
+        LOG_FUSE_EXIT("truncate", -ENOMEM);
+        return -ENOMEM;
+    }
+
+    struct tokens* toks = tokenize_path(noext_path);
     if (!toks) {
         LOG_FUSE_EXIT("truncate", -ENOMEM);
         return -ENOMEM;

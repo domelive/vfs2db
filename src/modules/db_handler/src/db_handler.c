@@ -92,7 +92,7 @@ static inline status_t get_cache_key_from_toks(struct tokens* toks, off_t block_
     LOG_TRACE("Getting attribute bytes: path='%s', block_offset=%ld", path,
               block_offset);
 
-    TRY_NOT_NULL(*key = arena_calloc(arena, 1, sizeof(CacheKey)), key_alloc_error, STATUS_ALLOC_ERROR, "Failed to allocate CacheKey for path '%s'", path);
+    TRY_NOT_NULL(*key = calloc(1, sizeof(CacheKey)), key_alloc_error, STATUS_ALLOC_ERROR, "Failed to allocate CacheKey for path '%s'", path);
 
     strncpy((*key)->query, path, strlen(path) + 1);
     (*key)->offset = block_offset;
@@ -283,12 +283,12 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
 
     // Calculate the bytes of the attribute
     *size = sqlite3_column_bytes(stmt, 0);
-    LOG_TRACE("Attribute size: %zu bytes", *size);
-    if (*size < 0) {
-        LOG_SQLITE_ERROR(db);
-        status = STATUS_DB_ERROR;
-        goto cleanup;
-    }
+    // LOG_TRACE("Attribute size: %zu bytes", *size);
+    // if (*size < 0) {
+    //     LOG_SQLITE_ERROR(db);
+    //     status = STATUS_DB_ERROR;
+    //     goto cleanup;
+    // }
 
 cleanup:
     if (stmt) sqlite3_finalize(stmt);
@@ -351,7 +351,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
                "Failed to execute chunk query for '%s/%s/%s'", toks->table, toks->record, toks->attribute);
 
-    TRY_NOT_NULL(data = arena_strdup(arena, (char*)sqlite3_column_text(stmt, 0)), cleanup, STATUS_ALLOC_ERROR, "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table, toks->record, toks->attribute);
+    TRY_NOT_NULL(data = strdup((char*)sqlite3_column_text(stmt, 0)), cleanup, STATUS_ALLOC_ERROR, "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table, toks->record, toks->attribute);
     data_size = (size_t)sqlite3_column_bytes(stmt, 0);
 
     // Calculate relative offset
@@ -359,7 +359,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     *bytes                 = data + relative_offset;
 
     if (cache_enabled) {
-        TRY_NOT_NULL(blk = arena_alloc(arena, sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate CacheBlock for '%s/%s/%s'", toks->table, toks->record, toks->attribute);
+        TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate CacheBlock for '%s/%s/%s'", toks->table, toks->record, toks->attribute);
 
         blk->key         = *key;
         blk->data        = data;
@@ -367,6 +367,8 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
         cache_add_block(blk);
         LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
+
+        free(key);
 
         cache_view();
     }
@@ -472,22 +474,24 @@ static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int
         }
         break;
     }
-    case SQLITE_TEXT: {
-        if (sqlite3_bind_text(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-            LOG_SQLITE_ERROR(db);
-            return STATUS_DB_ERROR;
-        }
-        break;
+    // case SQLITE_TEXT: {
+    //     if (sqlite3_bind_text(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+    //         LOG_SQLITE_ERROR(db);
+    //         return STATUS_DB_ERROR;
+    //     }
+    //     break;
+    // }
+    // case SQLITE_BLOB:
+    // default: {
+    //     if (sqlite3_bind_blob(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+    //         LOG_SQLITE_ERROR(db);
+    //         return STATUS_DB_ERROR;
+    //     }
+    //     break;
+    // }
     }
-    case SQLITE_BLOB:
-    default: {
-        if (sqlite3_bind_blob(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-            LOG_SQLITE_ERROR(db);
-            return STATUS_DB_ERROR;
-        }
-        break;
-    }
-    }
+
+    return STATUS_OK;
 }
 
 /**
@@ -537,7 +541,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         TRY_SQLITE(sqlite3_blob_write(blob_handle, buffer, (int)size, (int)offset), SQLITE_OK, cleanup, "Failed to write to blob: %s", sqlite3_errmsg(db));
 
         LOG_DEBUG("Blob updated in-place via Blob I/O (offset=%ld, size=%zu)", offset, size);
-        sqlite3_blob_close(blob_handle);
     } else {
         // Read all the attribute bytes
         char* bytes;
@@ -577,6 +580,8 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         CacheKey* key = NULL;
         TRY(get_cache_key_from_toks(toks, 0, &key), cleanup, "Failed to get cache key from tokens for eviction of '%s/%s/%s'", toks->table, toks->record, toks->attribute);
         
+        cache_evict_blocks_by_path(key->query);
+
         LOG_TRACE("Evicting cache blocks for updated attribute: path='%s'", key->query);
         free(key);
     }
@@ -585,7 +590,7 @@ cleanup:
     if (stmt) sqlite3_finalize(stmt);
     if (blob_handle) sqlite3_blob_close(blob_handle);
 
-    return STATUS_OK;
+    return status;
 }
 
 /**
@@ -627,6 +632,7 @@ status_t set_attribute_null(struct tokens* toks) {
         TRY(get_cache_key_from_toks(toks, 0, &key), cleanup, "Failed to get cache key from tokens for eviction of '%s/%s/%s'", toks->table, toks->record, toks->attribute);
         LOG_TRACE("Evicting cache blocks for NULLified attribute: path='%s'", key->query);
         cache_evict_blocks_by_path(key->query);
+        free(key);
     }
 
 cleanup:
@@ -650,6 +656,8 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     status_t status = STATUS_OK;
 
     LOG_TRACE("Getting row IDs for table: %s", table);
+
+    sqlite3_stmt* stmt;
 
     CacheKey* key = NULL;
     if (cache_enabled) {
@@ -680,12 +688,12 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
         LOG_DEBUG("Cache miss for table rowids: %s", table);
     }
 
-    sqlite3_stmt* stmt;
     TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_TABLE_ROWIDS, table), cleanup, STATUS_DB_ERROR, "Failed to build query statement for selecting rowids of table '%s'", table);
 
     int record_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char* rowid       = (const char*)sqlite3_column_text(stmt, 0);
+        LOG_TRACE("Record count: %d", record_count);
         records[record_count++] = arena_strdup(arena, rowid);
 
         if (record_count >= MAX_SIZE) {
@@ -700,14 +708,14 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     // populate cache
     if (cache_enabled) {
         CacheBlock* blk;
-        TRY_NOT_NULL(blk = arena_alloc(arena, sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate CacheBlock for rowids of table '%s'", table);
+        TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate CacheBlock for rowids of table '%s'", table);
 
         char** records_copy;
 
-        TRY_NOT_NULL(records_copy = arena_alloc(arena, record_count * sizeof(char*)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate records copy for cache of table '%s'", table);
+        TRY_NOT_NULL(records_copy = malloc(record_count * sizeof(char*)), cleanup, STATUS_ALLOC_ERROR, "Failed to allocate records copy for cache of table '%s'", table);
 
         for (int i = 0; i < record_count; i++) {
-            TRY_NOT_NULL(records_copy[i] = arena_strdup(arena, records[i]), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate record '%s' for cache of table '%s'", records[i], table);
+            TRY_NOT_NULL(records_copy[i] = strdup(records[i]), cleanup, STATUS_ALLOC_ERROR, "Failed to duplicate record '%s' for cache of table '%s'", records[i], table);
         }
 
         blk->key         = *key;
@@ -768,5 +776,5 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
 
 cleanup:
     if (pstmt) sqlite3_finalize(pstmt);
-    return STATUS_OK;
+    return status;
 }
