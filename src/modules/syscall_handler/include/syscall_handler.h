@@ -110,6 +110,19 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
                    struct fuse_file_info* fi, enum fuse_readdir_flags flags);
 
 /**
+ * VFS2DB Mkdir
+ *
+ * @brief Creates a new directory in the VFS2DB filesystem, which corresponds to creating a new
+ * table in the database or a new recozrd.
+ *
+ * @param[in] path    The directory path to create
+ * @param[in] mode    The directory mode (not used in this case)
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_mkdir(const char* path, mode_t mode);
+
+/**
  * VFS2DB Open
  *
  * @brief Opens a file in the VFS2DB filesystem. This function is currently a placeholder and does

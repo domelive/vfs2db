@@ -237,6 +237,45 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             return -ENOENT;
         }
 
+        // tokenize path to get table, record, and attribute for schema lookup
+        struct tokens* toks = tokenize_path(path);
+        if (!toks) {
+            LOG_ERROR("Failed to tokenize path: %s", path);
+            LOG_FUSE_EXIT("getattr", -ENOMEM);
+            return -ENOMEM;
+        }
+
+        if (toks->table) {
+            // Check if table exists in schema
+            Schema* table = find_schema_by_name(db_schema, toks->table);
+            if (!table) {
+                LOG_WARN("Table not found in schema: %s", toks->table);
+                LOG_FUSE_EXIT("getattr", -ENOENT);
+                return -ENOENT;
+            }
+
+            if (toks->record) {
+                // Check if record exists in database
+                if (record_exists(toks) != STATUS_OK) {
+                    LOG_WARN("Record not found: %s/%s", toks->table, toks->record);
+                    LOG_FUSE_EXIT("getattr", -ENOENT);
+                    return -ENOENT;
+                }
+
+                if (toks->attribute) {
+                    // Check if attribute exists in schema
+                    if (!find_attribute_by_name(table, toks->attribute) &&
+                        !find_pk_by_name(table, toks->attribute) &&
+                        !find_fk_by_name(table, toks->attribute)) {
+                        LOG_WARN("Attribute not found in schema: %s/%s/%s", toks->table,
+                                 toks->record, toks->attribute);
+                        LOG_FUSE_EXIT("getattr", -ENOENT);
+                        return -ENOENT;
+                    }
+                }
+            }
+        }
+
         st->st_mode  = S_IFDIR | 0755;
         st->st_nlink = 2;
         st->st_uid   = getuid();
@@ -263,11 +302,35 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             return -ENOMEM;
         }
 
-        // If any component is missing, we will treat it as a non-existent file
-        if (!toks->table || !toks->record || !toks->attribute) {
-            LOG_ERROR("getattr: incomplete path tokens for %s", path);
-            LOG_FUSE_EXIT("getattr", -ENOENT);
-            return -ENOENT;
+        if (toks->table) {
+            // Check if table exists in schema
+            Schema* table = find_schema_by_name(db_schema, toks->table);
+            if (!table) {
+                LOG_WARN("Table not found in schema: %s", toks->table);
+                LOG_FUSE_EXIT("getattr", -ENOENT);
+                return -ENOENT;
+            }
+
+            if (toks->record) {
+                // Check if record exists in database
+                if (record_exists(toks) != STATUS_OK) {
+                    LOG_WARN("Record not found: %s/%s", toks->table, toks->record);
+                    LOG_FUSE_EXIT("getattr", -ENOENT);
+                    return -ENOENT;
+                }
+
+                if (toks->attribute) {
+                    // Check if attribute exists in schema
+                    if (!find_attribute_by_name(table, toks->attribute) &&
+                        !find_pk_by_name(table, toks->attribute) &&
+                        !find_fk_by_name(table, toks->attribute)) {
+                        LOG_WARN("Attribute not found in schema: %s/%s/%s", toks->table,
+                                 toks->record, toks->attribute);
+                        LOG_FUSE_EXIT("getattr", -ENOENT);
+                        return -ENOENT;
+                    }
+                }
+            }
         }
 
         // We will treat foreign keys as symlinks and attributes as regular files.
@@ -508,6 +571,19 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
 cleanup:
     int code = status_to_errno(status);
     LOG_FUSE_EXIT("readdir", code);
+    return code;
+}
+
+int vfs2db_mkdir(const char* path, mode_t mode) {
+    LOG_FUSE_ENTER("mkdir", path);
+
+    ensure_arena_init();
+
+    status_t status = STATUS_OK;
+
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("mkdir", code);
     return code;
 }
 
