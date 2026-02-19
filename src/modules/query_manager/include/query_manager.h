@@ -1,0 +1,110 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+/**
+ * @file   query_manager.h
+ * @author Domenico Livera (domenico.livera@gmail.com)
+ * @author Nicola Travaglini (nicola1.travaglini@gmail.com)
+ * @brief  Query Manager Header File
+ * @date   Created on 2025-12-23
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#ifndef QUERY_MANAGER_H
+#define QUERY_MANAGER_H
+
+#include <sqlite3.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "errors.h"
+#include "logger.h"
+
+/**
+ * QueryID Enumeration
+ *
+ * @brief Enumeration of QueryIDs corresponding to different SQL queries used in the VFS2DB
+ * filesystem. Each QueryID represents a specific SQL query template that can be either static or
+ * dynamic.
+ */
+typedef enum {
+    QUERY_SELECT_TABLES_NAME,
+
+    QUERY_TPL_SELECT_TABLE_INFO,
+    QUERY_TPL_SELECT_ATTRIBUTE,
+    QUERY_TPL_SELECT_CHUNK_ATTRIBUTE,
+    QUERY_TPL_UPDATE_ATTRIBUTE,
+    QUERY_TPL_SELECT_TABLE_ROWIDS,
+    QUERY_TPL_SELECT_ROWID,
+    QUERY_TPL_UPDATE_ZERO_BLOB,
+
+    QUERY_COUNT
+} QueryID;
+
+/**
+ * Initialize Query Manager
+ *
+ * @brief Initializes the Query Manager by preparing static SQL statements.
+ *
+ * @param[in] db Pointer to the SQLite database connection
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t qm_init(sqlite3* db);
+
+/**
+ * Get Query String
+ *
+ * @brief Retrieves the SQL query string associated with the given QueryID.
+ *
+ * @param[in] qid The QueryID for which to retrieve the SQL query string
+ *
+ * @return The SQL query string if found, NULL otherwise
+ */
+char* qm_get_str(QueryID qid);
+
+/**
+ * Get Static Query Statement
+ *
+ * @brief Retrieves the prepared SQLite statement corresponding to the given QueryID.
+ *
+ * @param[in] qid The QueryID for which to retrieve the prepared statement
+ *
+ * @return Pointer to the prepared SQLite statement if found, NULL otherwise
+ */
+sqlite3_stmt* qm_get_static_query_statement(QueryID qid);
+
+/**
+ * Get Dynamic Query Statement
+ *
+ * @brief Prepares and retrieves a dynamic SQLite statement based on the given QueryID and
+ * parameters.
+ *
+ * @param[in] db  Pointer to the SQLite database connection
+ * @param[in] qid The QueryID for which to prepare the dynamic statement
+ * @param[in] ... Variadic arguments to format the SQL query string
+ *
+ * @return Pointer to the prepared SQLite statement if successful, NULL otherwise
+ */
+sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...);
+
+/**
+ * Cleanup Query Manager
+ *
+ * @brief Cleans up the Query Manager by finalizing prepared SQL statements.
+ */
+void qm_cleanup();
+
+#endif // QUERY_MANAGER_H

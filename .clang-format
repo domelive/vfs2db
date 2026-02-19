@@ -1,0 +1,31 @@
+# Configurazioni base per codice C di sistema
+Language: Cpp # clang-format usa Cpp anche per C puro
+BasedOnStyle: LLVM
+
+# Indentazione a 4 spazi (niente tab, evitano problemi di visualizzazione)
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# Lunghezza massima della riga: 80 o 100 caratteri è lo standard per i terminali
+ColumnLimit: 100
+
+# Posizionamento dei puntatori (es. void *ptr invece di void* ptr)
+# Nello sviluppo kernel/C è la norma associare l'asterisco al nome della variabile
+PointerAlignment: Left
+
+# Raggruppa gli include per categoria (librerie di sistema prima, poi le vostre)
+SortIncludes: true
+
+# Allinea le variabili e le macro consecutivamente (migliora tantissimo la leggibilità)
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignConsecutiveMacros: true
+
+# Le parentesi graffe per le funzioni vanno a capo (stile K&R / Linux Kernel)
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: false
+  AfterControlStatement: false
+  AfterStruct: false
+  AfterEnum: false
