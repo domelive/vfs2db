@@ -193,6 +193,7 @@ static inline int status_to_errno(status_t status) {
         int call_result = (call);                                                                  \
         if (call_result != ok_status) {                                                            \
             LOG_SQLITE_ERROR(db);                                                                  \
+            LOG_ERROR(fmt, ##__VA_ARGS__);                                                         \
             status = sqlite_to_status(call_result);                                                \
             goto label;                                                                            \
         }                                                                                          \

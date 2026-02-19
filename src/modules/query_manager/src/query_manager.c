@@ -98,6 +98,13 @@ static query_t query_store[] = {
                                        "%s",
                                        1, NULL},
 
+    [QUERY_TPL_SELECT_ROWID] = {"SELECT "
+                                "rowid "
+                                "FROM "
+                                "%s "
+                                "WHERE rowid = ?",
+                                1, NULL},
+
     [QUERY_TPL_UPDATE_ZERO_BLOB] = {"UPDATE "
                                     "%s "
                                     "SET "

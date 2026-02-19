@@ -565,6 +565,9 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     case 2: {
         LOG_DEBUG("readdir: listing attributes for %s/%s", toks->table, toks->record);
 
+        // Check if /table/record/ exists
+        TRY(record_exists(toks), cleanup, "Record not found: %s/%s", toks->table, toks->record);
+
         Schema* table;
 
         // Look up the table schema for the specified table to get information about its attributes,

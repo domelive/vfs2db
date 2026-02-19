@@ -354,6 +354,49 @@ cleanup:
 }
 
 /**
+ * Record Exists
+ *
+ * @brief Checks if a record exists in the database based on the provided tokens.
+ *
+ * This function executes a SQL query to check for the existence of a record in the specified table
+ * that matches the given record identifier. It returns STATUS_OK if the record exists, or an
+ * appropriate error status if it does not exist or if there is a database error.
+ *
+ * @param[in] toks Pointer to tokens structure containing table and record information
+ *
+ * @return STATUS_OK if the record exists, STATUS_DB_ERROR if there is a database error, or
+ * STATUS_DB_NOTFOUND if the record does not exist
+ */
+status_t record_exists(struct tokens* toks) {
+    ensure_arena_init();
+
+    LOG_TRACE("Checking if record exists: %s/%s", toks->table, toks->record);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt;
+
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ROWID, toks->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for record existence check: '%s/%s'", toks->table,
+                 toks->record);
+
+    // Bind the record value to the query
+    TRY_SQLITE(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+               "Failed to bind record value for existence check query: '%s/%s'", toks->table,
+               toks->record);
+
+    // Execute the query and check if a row is returned, which indicates that the record exists.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
+               "Failed to execute record existence check query for '%s/%s'", toks->table,
+               toks->record);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+/**
  * Get Attribute Size
  * @todo Handle error cases properly
  *
@@ -640,13 +683,13 @@ static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int
         }
         break;
     }
-        // case SQLITE_TEXT: {
-        //     if (sqlite3_bind_text(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
-        //         LOG_SQLITE_ERROR(db);
-        //         return STATUS_DB_ERROR;
-        //     }
-        //     break;
-        // }
+    case SQLITE_TEXT: {
+        if (sqlite3_bind_text(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+            LOG_SQLITE_ERROR(db);
+            return STATUS_DB_ERROR;
+        }
+        break;
+    }
         // case SQLITE_BLOB:
         // default: {
         //     if (sqlite3_bind_blob(stmt, 1, value, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
@@ -684,7 +727,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
     // in-place updates without needing to read the entire value into memory. This allows for
     // efficient updates of large TEXT or BLOB attributes by directly writing to the database file
     // at the correct offset.
-    if (type == SQLITE_TEXT || type == SQLITE_BLOB) {
+    if (type == SQLITE_BLOB) {
         // Get current attribute size
         size_t current_size;
         TRY(get_attribute_size(toks, &current_size), cleanup,
@@ -734,7 +777,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
     }
     // For other data types (e.g., INTEGER, FLOAT), we need to read the entire attribute value into
     // memory, apply the update to the in-memory value, and then write the updated value back to the
-    // database. This is necessary because non-BLOB/TEXT types cannot be updated in-place and
+    // database. This is necessary because non-BLOB types cannot be updated in-place and
     // require a full read-modify-write cycle.
     else {
         // Read all the attribute bytes

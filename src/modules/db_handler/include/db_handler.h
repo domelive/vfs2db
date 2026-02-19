@@ -94,6 +94,22 @@ status_t init_db_schema(DbSchema* db_schema);
 status_t init_schema(Schema* schema);
 
 /**
+ * Record Exists
+ *
+ * @brief Checks if a record exists in the database based on the provided tokens.
+ *
+ * This function executes a SQL query to check for the existence of a record in the specified table
+ * that matches the given record identifier. It returns STATUS_OK if the record exists, or an
+ * appropriate error status if it does not exist or if there is a database error.
+ *
+ * @param[in] toks Pointer to tokens structure containing table and record information
+ *
+ * @return STATUS_OK if the record exists, STATUS_DB_ERROR if there is a database error, or
+ * STATUS_DB_NOTFOUND if the record does not exist
+ */
+status_t record_exists(struct tokens* toks);
+
+/**
  * Get Attribute Size
  * @todo Handle error cases properly
  *

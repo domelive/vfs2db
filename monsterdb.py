@@ -194,25 +194,6 @@ def create_complex_db():
         db_size = (pages * p_size) / (1024 * 1024)
         print(f"Dimensione attuale Database: {db_size:.2f} MB")
 
-        # Test DELETE CASCADE:
-        # Cancellando l'User 1, dovrebbe cancellare:
-        # - Il record in large_assets (BLOB)
-        # - Il record in chain_level_1... che cancella chain_level_2... ecc.
-        print("Tentativo di DELETE su User ID 1 (deve scatenare CASCADE su BLOB e Chain)...")
-        start_del = time.time()
-        c.execute("DELETE FROM users WHERE id = 1")
-        conn.commit()
-        end_del = time.time()
-        print(f"Cancellazione completata in {end_del - start_del:.4f} secondi.")
-
-        # Verifica che il livello 10 della catena sia sparito
-        c.execute(f"SELECT count(*) FROM chain_level_{CHAIN_DEPTH}")
-        count_chain = c.fetchone()[0]
-        if count_chain == 0:
-            print(f"SUCCESS: La cancellazione a cascata ha rimosso correttamente i dati fino al livello {CHAIN_DEPTH}.")
-        else:
-            print(f"FAIL: Trovati ancora {count_chain} record nel livello {CHAIN_DEPTH}.")
-
     except sqlite3.Error as e:
         print(f"ERRORE CRITICO SQLITE: {e}")
     except Exception as e:
