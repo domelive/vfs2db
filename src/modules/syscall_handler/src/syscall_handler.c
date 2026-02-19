@@ -28,13 +28,6 @@ extern DbSchema* db_schema; /**< Database schema structure */
 
 static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficient allocations */
 
-/**
- * Ensure Arena Initialization
- *
- * @brief Ensures that the thread-local arena is initialized and resets it for reuse. This function
- * should be called at the beginning of each syscall handler to prepare the arena for temporary
- * allocations during the handling of the syscall.
- */
 static inline void ensure_arena_init() {
     if (!arena) {
         LOG_DEBUG("Creating thread-local arena");
@@ -50,19 +43,6 @@ static inline void ensure_arena_init() {
     arena_reset(arena);
 }
 
-/**
- * Tokenize Path
- *
- * @brief Tokenizes a file path into its components (table, record, attribute) based on the expected
- * format of the paths in the VFS2DB filesystem. The path is expected to be in the form
- * "/table/record/attribute.vfs2db".
- *
- * @param[in] path The file path to tokenize
- *
- * @return Pointer to a tokens structure containing the table, record, and attribute components of
- * the path. The returned structure is allocated in the thread-local arena and should not be freed
- * by the caller.
- */
 static inline struct tokens* tokenize_path(const char* path) {
     // We expect paths in the form of /table/record/attribute.vfs2db, so we can have at most 3
     // tokens (table, record, attribute). We will ignore the .vfs2db extension in this function and
@@ -106,17 +86,6 @@ static inline struct tokens* tokenize_path(const char* path) {
     return toks;
 }
 
-/**
- * Remove Extension
- *
- * @brief Removes the ".vfs2db" extension from a file path if it is present. This function is used
- * to get the base path for tokenization and schema lookup, since the ".vfs2db" extension is only
- * used for file naming in the VFS2DB filesystem and is not part of the logical path components.
- *
- * @param[in] path The file path from which to remove the extension
- *
- * @return Pointer to a new string with the extension removed, allocated in the thread-local arena.
- */
 static inline char* remove_extension(const char* path) {
     // We expect paths to end with ".vfs2db" for files, so we can remove the last 7 characters to
     // get the base path for tokenization. If the path does not end with ".vfs2db", we will treat it
@@ -140,18 +109,6 @@ static inline char* remove_extension(const char* path) {
     return noext_path;
 }
 
-/**
- * Check Symlink
- *
- * @brief Checks if the given path tokens correspond to a symbolic link in the VFS2DB filesystem,
- * which is the case when the attribute is a foreign key in the table schema. This function is used
- * in the getattr handler to determine if a file should be treated as a symlink based on the
- * database schema.
- *
- * @param[in] toks The tokenized path components (table, record, attribute)
- *
- * @return 1 if the path corresponds to a symlink (foreign key), 0 otherwise
- */
 static inline int check_symlink(struct tokens* toks) {
     // Check if table exists in schema
     Schema* table = find_schema_by_name(db_schema, toks->table);
@@ -169,18 +126,6 @@ static inline int check_symlink(struct tokens* toks) {
     return 0;
 }
 
-/**
- * VFS2DB Init
- *
- * @brief Initializes the VFS2DB filesystem, setting up the database connection and loading the
- * schema. This function is called when the filesystem is mounted and is responsible for preparing
- * the necessary data structures and connections for the filesystem to operate.
- *
- * @param[in] conn    Pointer to fuse_conn_info structure (not used in this case)
- * @param[in] cfg     Pointer to fuse_config structure (not used in this case)
- *
- * @return Pointer to private data
- */
 void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     LOG_INFO("Initializing VFS2DB filesystem...");
 
@@ -236,16 +181,6 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     return NULL;
 }
 
-/**
- * VFS2DB Destroy
- *
- * @brief Cleans up resources used by the VFS2DB filesystem, including closing the database
- * connection and freeing the schema. This function is called when the filesystem is unmounted and
- * is responsible for releasing any resources that were allocated during initialization and
- * operation of the filesystem.
- *
- * @param[in] private_data Pointer to private data (not used in this case)
- */
 void vfs2db_destroy(void* private_data) {
     LOG_INFO("Shutting down VFS2DB filesystem...");
 
@@ -285,20 +220,6 @@ void vfs2db_destroy(void* private_data) {
     }
 }
 
-/**
- * VFS2DB Getattr
- *
- * @brief Retrieves the attributes of a file or directory in the VFS2DB filesystem. This function is
- * called when the system needs to get information about a file or directory, such as its type,
- * size, permissions, etc. The function determines the type of the file (directory, regular file, or
- * symlink) based on the path and the database schema, and fills the stat structure accordingly.
- *
- * @param[in]  path    The file or directory path
- * @param[out] st      Pointer to a stat structure to be filled with attributes
- * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
- *
- * @return 0 on success, negative error code on failure
- */
 int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi) {
     (void)fi;
     status_t status = STATUS_OK;
@@ -381,18 +302,6 @@ cleanup:
     return code;
 }
 
-/**
- * VFS2DB Getxattr
- *
- * @brief Retrieves the extended attribute of a file in the VFS2DB filesystem.
- *
- * @param[in]  path  The file path
- * @param[in]  name  The name of the extended attribute to retrieve
- * @param[out] value Pointer to a buffer where the attribute value will be stored
- * @param[in]  size  Size of the buffer
- *
- * @return Size of the attribute value on success, negative error code on failure
- */
 int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size) {
     status_t status = STATUS_OK;
 
@@ -469,20 +378,6 @@ int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size
     return strlen(t_str);
 }
 
-/**
- * VFS2DB Readdir
- *
- * @brief Reads the contents of a directory in the VFS2DB filesystem.
- *
- * @param[in]  path    The directory path
- * @param[out] buffer  Pointer to a buffer where directory entries will be stored
- * @param[in]  filler  Function pointer to add entries to the buffer
- * @param[in]  offset  Offset within the directory (not used in this case)
- * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
- * @param[in]  flags   Flags for reading the directory (not used in this case)
- *
- * @return 0 on success, negative error code on failure
- */
 int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset,
                    struct fuse_file_info* fi, enum fuse_readdir_flags flags) {
     (void)offset;
@@ -616,18 +511,6 @@ cleanup:
     return code;
 }
 
-/**
- * VFS2DB Open
- *
- * @brief Opens a file in the VFS2DB filesystem. This function is called when a file is opened.
- *        It checks the validity of the path and prepares any necessary data structures for
- * subsequent read/write operations.
- *
- * @param[in] path    The file path to open
- * @param[in] fi      Pointer to fuse_file_info structure containing flags and other info about
- *
- * @return 0 on success, negative error code on failure
- */
 int vfs2db_open(const char* path, struct fuse_file_info* fi) {
     status_t status = STATUS_OK;
 
@@ -660,35 +543,21 @@ int vfs2db_open(const char* path, struct fuse_file_info* fi) {
 
     // If file doesn't exist and O_CREAT isn't specified, error
     // /metrics/123/attribute.vfs2db
-    // if (record_in_db(toks)) {
-
-    // } else {
-
-    // }
 
     // If O_CREAT
     if (flags & O_CREAT) {
+        LOG_WARN("open: O_CREAT flag is not supported yet, file creation is not implemented");
+        return 0;
     }
+
     // If O_TRUNC
     if (flags & O_TRUNC) {
+        vfs2db_truncate(path, 0, NULL);
     }
 
     return 0;
 }
 
-/**
- * VFS2DB Read
- *
- * @brief Reads data from a file in the VFS2DB filesystem.
- *
- * @param[in]  path    The file path
- * @param[out] buffer  Buffer to store the read data
- * @param[in]  size    Size of the buffer
- * @param[in]  offset  Offset within the file to start reading
- * @param[in]  fi      Pointer to fuse_file_info structure (not used in this case)
- *
- * @return Number of bytes read on success, negative error code on failure
- */
 int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
                 struct fuse_file_info* fi) {
     (void)fi;
@@ -749,19 +618,6 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     return bytes_to_copy;
 }
 
-/**
- * VFS2DB Write
- *
- * @brief Writes data to a file in the VFS2DB filesystem.
- *
- * @param[in] path    The file path
- * @param[in] buffer  Buffer containing the data to write
- * @param[in] size    Size of the data to write
- * @param[in] offset  Offset within the file to start writing
- * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
- *
- * @return Number of bytes written on success, negative error code on failure
- */
 int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset,
                  struct fuse_file_info* fi) {
     (void)fi;
@@ -799,17 +655,6 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
     return (int)size;
 }
 
-/**
- * VFS2DB Truncate
- *
- * @brief Truncates a file in the VFS2DB filesystem to a specified size.
- *
- * @param[in] path    The file path
- * @param[in] size    The size to truncate to
- * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
- *
- * @return 0 on success, negative error code on failure
- */
 int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
     status_t status = STATUS_OK;
 
@@ -833,7 +678,7 @@ int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
 
     // Truncation to zero size is supported by setting the attribute value to NULL in the database.
     if (size == 0) {
-        TRY(set_attribute_null(toks), cleanup, "Failed to set attribute to NULL for %s", path);
+        TRY(set_attribute_empty(toks), cleanup, "Failed to set attribute to NULL for %s", path);
     } else {
         LOG_WARN("truncate: truncation to non-zero size is not supported, setting attribute to "
                  "NULL instead");
@@ -845,19 +690,6 @@ cleanup:
     return code;
 }
 
-/**
- * VFS2DB Create
- * @todo Implement the function to insert a new record in the database
- *
- * @brief Creates a new file in the VFS2DB filesystem, which corresponds to inserting a new
- * record in the database.
- *
- * @param[in] path The file path to create
- * @param[in] mode The file mode (permissions)
- * @param[in] fi   Pointer to fuse_file_info structure (not used in this case
- *
- * @return 0 on success, negative error code on failure
- */
 int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
     (void)mode;
     (void)fi;
@@ -871,17 +703,6 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
     return 0;
 }
 
-/**
- * VFS2DB Readlink
- *
- * @brief Reads the target of a symbolic link in the VFS2DB filesystem.
- *
- * @param[in] path   The symbolic link path
- * @param[out] buffer Buffer to store the link target
- * @param[in] size   Size of the buffer
- *
- * @return 0 on success, negative error code on failure
- */
 int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     LOG_FUSE_ENTER("readlink", path);
 

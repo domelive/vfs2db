@@ -1,105 +1,114 @@
 # vfs2db
+
 FUSE driver to navigate an SQL database just like a filesystem.
+
 # Motivations
-+ Legacy and compatibility: Do you have an old application that only reads from text files? With this driver, you can read data from a modern db without rewriting a single line of code.
-+ Easy to use: This driver let's you navigate a modern db without learning SQL.
-+ Script power: You can use bash, python, grep, awk or sed on a modern db. For example if you have to search for a string in all records you can do `$ grep -r "error..." /mnt/db/logs`.
-+ Adaptability: This driver let's you have any type of tables in a hierarchical filesystem-like view.
+
+- Legacy and compatibility: Do you have an old application that only reads from text files? With this driver, you can read data from a modern db without rewriting a single line of code.
+- Easy to use: This driver let's you navigate a modern db without learning SQL.
+- Script power: You can use bash, python, grep, awk or sed on a modern db. For example if you have to search for a string in all records you can do `$ grep -r "error..." /mnt/db/logs`.
+- Adaptability: This driver let's you have any type of tables in a hierarchical filesystem-like view.
 
 ## Todo
+
+- [ ] bugs
+  - [ ] `set_attribute_empty` does not work for NOT NULL attributes.
+    - The solution could be using transactions where the `rowid` can be NULL in an inconsistent state.
 - [ ] refactoring
-    - [x] pragma init
-    - [x] errors
-    - [x] query manager
-    - [x] CMake building
-    - [x] Logger
-        - ~~Has different severity levels: DEBUG, INFO, WARNING, ERROR, FATAL~~.
-        - ~~Has a timestamp when the event occurred~~.
-        - ~~Has a context in terms of the file, line and function where the event occurred~~.
-        - ~~Has a configurable output~~.
-        - ~~Has to be thread safe because FUSE can be multithreaded~~.
-        - Maybe it's best to transform it's implementation in an header only library? 
-    - [ ] ns-programming
-    - [ ] general fixes
-        - Modify cache_add_block to check if block dimension is too big.
-            - If too big we can return an error or, better, we can make it add more blocks.
-        - ~~Check if everything becomes an actual blob in the database~~.
-        - Macro for ifs
-        - ~~Code styles are not defined~~.
-        - Errors are handled inconsistently. Some functions return `-1` some `status_t`.
-        - Memory leaks.
-        - Defining constants for magic numbers.
-        - Make the `status_t` enum more explicit by adding more types of errors.
-        - Too much variables on the stack.
-            - For example we have `char* record_list[MAX_SIZE]` that results in 128KB on the stack. (That's a lot for the stack if `MAX_SIZE` can grow)
-            - We could also pass into the `get_table_rowids` function a callback `filler` that fills the buffer while SQLite returns the rows.
-        - Get rid of all global variables.
-            - What if we wanted to have two instances of the filesystem mounted at the same time? We can create a struct `VfsContext` that has `db` and `schema`.
-                - We could also put the cache.
-            - If we implement this struct we should retrieve it every time we do a FUSE operation.
-                - We could pass it inside the `fuse_main` function like `user_data`.
-                - `struct fuse_context* fc = fuse_get_context();` | `\n` | `VfsContext* ctx = (VfsContext*)fc->private_data;`. (Those are multiple lines of code...)
+  - [x] pragma init
+  - [x] errors
+  - [x] query manager
+  - [x] CMake building
+  - [x] Logger
+    - ~~Has different severity levels: DEBUG, INFO, WARNING, ERROR, FATAL~~.
+    - ~~Has a timestamp when the event occurred~~.
+    - ~~Has a context in terms of the file, line and function where the event occurred~~.
+    - ~~Has a configurable output~~.
+    - ~~Has to be thread safe because FUSE can be multithreaded~~.
+    - Maybe it's best to transform it's implementation in an header only library?
+  - [ ] ns-programming
+  - [ ] general fixes
+    - ~~Modify cache_add_block to check if block dimension is too big~~.
+      - ~~If too big we can return an error or, better, we can make it add more blocks~~.
+    - ~~Check if everything becomes an actual blob in the database~~.
+    - ~~Macro for ifs~~.
+    - ~~Code styles are not defined~~.
+    - ~~Errors are handled inconsistently. Some functions return `-1` some `status_t`~~.
+    - Memory leaks.
+    - Defining constants for magic numbers.
+    - ~~Make the `status_t` enum more explicit by adding more types of errors~~.
+    - Too much variables on the stack.
+      - For example we have `char* record_list[MAX_SIZE]` that results in 128KB on the stack. (That's a lot for the stack if `MAX_SIZE` can grow)
+      - We could also pass into the `get_table_rowids` function a callback `filler` that fills the buffer while SQLite returns the rows.
+    - Get rid of all global variables.
+      - What if we wanted to have two instances of the filesystem mounted at the same time? We can create a struct `VfsContext` that has `db` and `schema`.
+        - We could also put the cache.
+      - If we implement this struct we should retrieve it every time we do a FUSE operation.
+        - We could pass it inside the `fuse_main` function like `user_data`.
+        - `struct fuse_context* fc = fuse_get_context();` | `\n` | `VfsContext* ctx = (VfsContext*)fc->private_data;`. (Those are multiple lines of code...)
 - [x] optimizations
-    - [x] cache to save query result for multiple reads and writes of the same file
-        - Make it limitless (for the rowid query)
-        - ~~Add metrics like hits, misses and evictions~~.
-        - If we really want to optimize we could add a pool allocator for the LRU blocks.
-            - We pre-allocate a large block of memory divided into fixed-size chunks of uniform size.
-                - The limit is that we must know the size of the pool at the start. But we already do, because we have `CACHE_BLOCKS`.
-            - This way we grant O(1) allocation and deallocation.
-            - We could implement it like this:
-                - We add an array of `CacheBlocks` that represents the pool.
-                    - Must be stack allocated.
-                - Then we add a pointer `free_list` which represents the free blocks list.
-            - This way there are no more `free()` because everything, except the actual buffer, is handled by the pool allocator.
-    - [x] memory arena
-        - Needs to be used for every FUSE operation.
-            - We allocate small things and then we call reset to free the memory and leave it for the next operation.
-        - Needs to be thread local because FUSE can be multi-threaded.
-            - In order to be thread local we must add `__thread` to the type when declaring the arena.
-            - It means that every single thready has it's own copy of the arena.
-                - There must be only one copy for each thread. (Singleton)
-            - We could allocate 1MB for every thread.
-        - API:
-            - `arena_create(size)` --> returns an arena object.
-            - `arena_alloc(arena, size)` --> returns the pointer to the newly allocated memory.
-                - Be carefull with the alignment at the start.
-                - The next aligned address is equal to: `(curr_addr + ARENA_ALIGN - 1) & ~(ARENA_ALIGN - 1)`. (To discuss, because i really do not understand this formula).
-            - `arena_calloc(arena, count, size)` --> just like calloc, the memory allocated is also zeroed.
-            - `arena_strdup(arena, string)` --> duplicates a string inside the arena.
-            - `arena_reset(arena)` --> deallocates the entire used memory inside the arena in O(1).
-            - `arena_destroy(arena)` --> destroys the memory arena and frees the memory.
-            - `arena_used(arena)` --> returns the amount of memory used.
-            - `arena_available(arena)` --> returns the amount of available memory.
-        - The implementation can also use the virtual memory.
-            - We reserve a specific address interval.
-                - We could actually reserve 4GB because it does not cost us anything in terms of RAM.
-            - When we actually need to allocate memory we commit the addresses that we need, so that we actually use the RAM.
-                - This way our arena uses exactly the RAM that we need, and we do not need to move pointers.
-    - [x] schema hashmap
-    - [x] fk hashmap
-    - [x] pk & attr sets
+  - [x] cache to save query result for multiple reads and writes of the same file
+    - Make it limitless (for the rowid query)
+    - ~~Add metrics like hits, misses and evictions~~.
+    - If we really want to optimize we could add a pool allocator for the LRU blocks.
+      - We pre-allocate a large block of memory divided into fixed-size chunks of uniform size.
+        - The limit is that we must know the size of the pool at the start. But we already do, because we have `CACHE_BLOCKS`.
+      - This way we grant O(1) allocation and deallocation.
+      - We could implement it like this:
+        - We add an array of `CacheBlocks` that represents the pool.
+          - Must be stack allocated.
+        - Then we add a pointer `free_list` which represents the free blocks list.
+      - This way there are no more `free()` because everything, except the actual buffer, is handled by the pool allocator.
+  - [x] memory arena
+    - Needs to be used for every FUSE operation.
+      - We allocate small things and then we call reset to free the memory and leave it for the next operation.
+    - Needs to be thread local because FUSE can be multi-threaded.
+      - In order to be thread local we must add `__thread` to the type when declaring the arena.
+      - It means that every single thready has it's own copy of the arena.
+        - There must be only one copy for each thread. (Singleton)
+      - We could allocate 1MB for every thread.
+    - API:
+      - `arena_create(size)` --> returns an arena object.
+      - `arena_alloc(arena, size)` --> returns the pointer to the newly allocated memory.
+        - Be carefull with the alignment at the start.
+        - The next aligned address is equal to: `(curr_addr + ARENA_ALIGN - 1) & ~(ARENA_ALIGN - 1)`. (To discuss, because i really do not understand this formula).
+      - `arena_calloc(arena, count, size)` --> just like calloc, the memory allocated is also zeroed.
+      - `arena_strdup(arena, string)` --> duplicates a string inside the arena.
+      - `arena_reset(arena)` --> deallocates the entire used memory inside the arena in O(1).
+      - `arena_destroy(arena)` --> destroys the memory arena and frees the memory.
+      - `arena_used(arena)` --> returns the amount of memory used.
+      - `arena_available(arena)` --> returns the amount of available memory.
+    - The implementation can also use the virtual memory.
+      - We reserve a specific address interval.
+        - We could actually reserve 4GB because it does not cost us anything in terms of RAM.
+      - When we actually need to allocate memory we commit the addresses that we need, so that we actually use the RAM.
+        - This way our arena uses exactly the RAM that we need, and we do not need to move pointers.
+  - [x] schema hashmap
+  - [x] fk hashmap
+  - [x] pk & attr sets
 - [ ] insert/create/alter table;
 - [ ] delete (unlink, rmdir o remove);
 - [ ] rowid;
 - [ ] metadata;
 
 ### INSERT (insert new record)
+
 > ""
 > mkdir test/orders/4/
 
 ? INSERT INTO orders(rowid) VALUES (4);
 
 > ls test/orders/4
-id.vfs2db
-price.vfs2db
+> id.vfs2db
+> price.vfs2db
 
 > cat test/orders/4/id.vfs2db
-4
+> 4
 
 > cat test/orders/4/price.vfs2db
 
 ### CREATE (insert new table)
+
 > mkdir test/newtable/
 
 ? CREATE TABLE newtable(rowid)
@@ -111,9 +120,10 @@ price.vfs2db
 ? INSERT INTO newtable(rowid) VALUES (1);
 
 > ls test/newtable/1/
-rowid.vfs2db
+> rowid.vfs2db
 
 ### ALTER TABLE ADD (insert new attribute)
+
 > touch test/newtable/1/attr2.vfs2db
 
 ? ALTER TABLE newtable ADD attr2 TEXT;
@@ -123,5 +133,5 @@ rowid.vfs2db
 ? INSERT INTO newtable(rowid) VALUES (2);
 
 > ls test/newtable/2/
-rowid.vfs2db
-attr2.vfs2db
+> rowid.vfs2db
+> attr2.vfs2db

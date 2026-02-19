@@ -132,27 +132,6 @@ key_alloc_error:
     return status;
 }
 
-/**
- * Initialize Database Schema
- * @todo Handle error cases properly
- *
- * @brief Initializes the DbSchema structure by retrieving table names
- *        from the database.
- *
- * This function populates the provided DbSchema structure with
- * the names of all tables present in the database.
- *
- * Uses the following SQL query:
- *
- * - `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';`
- *
- * Where `sqlite_master` is a special table that has the following columns: `| type | name |
- * tbl_name | rootpage | sql |`
- *
- * @param[out] db_schema Pointer to DbSchema structure to initialize
- *
- * @return 0 on success, -1 on failure
- */
 status_t init_db_schema(DbSchema* db_schema) {
     status_t status = STATUS_OK;
 
@@ -190,28 +169,6 @@ cleanup:
     return status;
 }
 
-/**
- * Initialize Schema Structure
- * @todo Handle error cases properly
- *
- * @brief Initializes the Schema structure by retrieving table information
- *        from the database using `PRAGMA` statements.
- *
- * This function populates the provided Schema structure with
- * information about the table's columns, primary keys, and foreign keys.
- *
- * Uses the following `PRAGMA` statements:
- *
- * - `PRAGMA table_info(table_name)`: column informations `| cid | name | type | notnull |
- * dflt_value | pk |`
- *
- * - `PRAGMA foreign_key_list(table_name)`: foreign key informations `| id | seq | table | from
- * | to | on_update | on_delete | match |`
- *
- * @param[out] schema Pointer to Schema structure to initialize
- *
- * @return 0 on success, -1 on failure
- */
 status_t init_schema(Schema* schema) {
     status_t status = STATUS_OK;
 
@@ -353,23 +310,7 @@ cleanup:
     return status;
 }
 
-/**
- * Record Exists
- *
- * @brief Checks if a record exists in the database based on the provided tokens.
- *
- * This function executes a SQL query to check for the existence of a record in the specified table
- * that matches the given record identifier. It returns STATUS_OK if the record exists, or an
- * appropriate error status if it does not exist or if there is a database error.
- *
- * @param[in] toks Pointer to tokens structure containing table and record information
- *
- * @return STATUS_OK if the record exists, STATUS_DB_ERROR if there is a database error, or
- * STATUS_DB_NOTFOUND if the record does not exist
- */
 status_t record_exists(struct tokens* toks) {
-    ensure_arena_init();
-
     LOG_TRACE("Checking if record exists: %s/%s", toks->table, toks->record);
 
     status_t      status = STATUS_OK;
@@ -396,21 +337,6 @@ cleanup:
     return status;
 }
 
-/**
- * Get Attribute Size
- * @todo Handle error cases properly
- *
- * @brief Retrieves the size (in bytes) of a specific attribute value
- *        for a given record in a table.
- *
- * This function executes a SQL query to fetch the attribute value
- * and calculates its size in bytes.
- *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute
- * information
- *
- * @return Size of the attribute in bytes on success, -1 on failure
- */
 status_t get_attribute_size(struct tokens* toks, size_t* size) {
     ensure_arena_init();
 
@@ -445,23 +371,6 @@ cleanup:
     return status;
 }
 
-/**
- * Get Attribute Bytes
- * @todo Handle error cases properly
- *
- * @brief Retrieves the bytes of a specific attribute for a given record in a table.
- *
- * This function executes a SQL query to fetch the attribute value
- * and returns it as a dynamically allocated string.
- *
- * @param[in]  toks  Pointer to tokens structure containing table, record, and attribute
- * information
- * @param[out] bytes Pointer to a char pointer where the attribute value will be stored
- * @param[out] size  Pointer to a size_t variable where the size of the attribute value will be
- * stored
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
 status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes) {
     ensure_arena_init();
 
@@ -556,6 +465,8 @@ status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
+
     // Build the statement to retrieve the entire attribute value for the specified table, record,
     // and attribute using the QUERY_TPL_SELECT_ATTRIBUTE template.
     TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
@@ -588,23 +499,7 @@ cleanup:
     return status;
 }
 
-/**
- * Get Attribute Type
- * @todo Handle error cases properly
- *
- * @brief Retrieves the data type of a specific attribute for a given record in a table.
- *
- * This function executes a SQL query to fetch the attribute value
- * and determines its data type.
- *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute
- * information
- *
- * @return SQLite data type constant (e.g., SQLITE_INTEGER, SQLITE_TEXT) on success, -1 on
- * failure
- */
 status_t get_attribute_type(struct tokens* toks, int* type) {
-    ensure_arena_init();
     status_t status = STATUS_OK;
 
     LOG_TRACE("Getting attribute type: %s/%s/%s", toks->table, toks->record, toks->attribute);
@@ -651,16 +546,6 @@ cleanup:
     return status;
 }
 
-/**
- * Bind Attribute Value
- * @brief Binds a value to a SQLite statement based on the attribute's data type.
- *
- * @param stmt Pointer to the SQLite statement to bind the value to
- * @param value The value to bind
- * @param type The SQLite data type of the value
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
 static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int type) {
     switch (type) {
     // For integer types, convert the string value to a 64-bit integer and bind it to the statement
@@ -703,9 +588,6 @@ static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int
     return STATUS_OK;
 }
 
-/**
- * Update Attribute Value
- */
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size,
                                 off_t offset) {
     ensure_arena_init();
@@ -744,7 +626,8 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
                       current_size, end_of_write);
 
             TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ZERO_BLOB,
-                                                                 toks->table, toks->attribute),
+                                                                 toks->table, toks->attribute,
+                                                                 toks->attribute),
                          cleanup, STATUS_DB_ERROR,
                          "Failed to build query statement for blob expansion of '%s/%s/%s'",
                          toks->table, toks->record, toks->attribute);
@@ -834,7 +717,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
             "Failed to get cache key from tokens for eviction of '%s/%s/%s'", toks->table,
             toks->record, toks->attribute);
 
-        cache_evict_blocks_by_path(key->query);
+        cache_evict_blocks_from_toks(toks);
 
         LOG_TRACE("Evicting cache blocks for updated attribute: path='%s'", key->query);
         free(key);
@@ -849,53 +732,40 @@ cleanup:
     return status;
 }
 
-/**
- * Set Attribute to NULL
- * @todo Handle error cases properly
- *
- * @brief Sets the value of a specific attribute to NULL for a given record in a table.
- *
- * This function executes a SQL `UPDATE` statement to set the attribute value to NULL.
- *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute
- * information
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
-status_t set_attribute_null(struct tokens* toks) {
+status_t set_attribute_empty(struct tokens* toks) {
     ensure_arena_init();
     status_t status = STATUS_OK;
 
-    LOG_DEBUG("Setting attribute to NULL: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_DEBUG("Setting attribute to empty: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
     sqlite3_stmt* stmt = NULL;
 
-    // Build the UPDATE statement to set the specified attribute to NULL for the given table and
+    // Build the UPDATE statement to set the specified attribute to empty for the given table and
     // record using the QUERY_TPL_UPDATE_ATTRIBUTE template.
     TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE,
                                                          toks->table, toks->attribute),
                  cleanup, STATUS_DB_ERROR,
-                 "Failed to build query statement for setting attribute to NULL for '%s/%s/%s'",
+                 "Failed to build query statement for setting attribute to empty for '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
 
     // NOTE: it should NOT nullify the field, because it can have a 'NOT NULL' constraint
-    TRY_SQLITE(sqlite3_bind_null(stmt, 1), SQLITE_OK, cleanup,
-               "Failed to bind NULL value for setting attribute to NULL for '%s/%s/%s'",
+    TRY_SQLITE(sqlite3_bind_text(stmt, 1, "", -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+               "Failed to bind empty string for setting attribute to empty for '%s/%s/%s'",
                toks->table, toks->record, toks->attribute);
 
     // Bind the record ID for the WHERE clause to specify which record's attribute value should be
-    // set to NULL.
+    // set to empty.
     TRY_SQLITE(sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
-               "Failed to bind record value for setting attribute to NULL for '%s/%s/%s'",
+               "Failed to bind record value for setting attribute to empty for '%s/%s/%s'",
                toks->table, toks->record, toks->attribute);
 
-    // Execute the UPDATE statement to set the attribute value to NULL for the specified record.
+    // Execute the UPDATE statement to set the attribute value to empty for the specified record.
     TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
-               "Failed to execute UPDATE query for setting attribute to NULL for '%s/%s/%s'",
+               "Failed to execute UPDATE query for setting attribute to empty for '%s/%s/%s'",
                toks->table, toks->record, toks->attribute);
 
     int changes = sqlite3_changes(db);
-    LOG_DEBUG("Attribute set to NULL successfully, %d rows affected", changes);
+    LOG_DEBUG("Attribute set to empty successfully, %d rows affected", changes);
 
     if (cache_enabled) {
         // Evict the corresponding cache blocks, if exists
@@ -903,8 +773,8 @@ status_t set_attribute_null(struct tokens* toks) {
         TRY(get_cache_key_from_toks(toks, 0, &key), cleanup,
             "Failed to get cache key from tokens for eviction of '%s/%s/%s'", toks->table,
             toks->record, toks->attribute);
-        LOG_TRACE("Evicting cache blocks for NULLified attribute: path='%s'", key->query);
-        cache_evict_blocks_by_path(key->query);
+        LOG_TRACE("Evicting cache blocks for emptyified attribute: path='%s'", key->query);
+        cache_evict_blocks_from_toks(toks);
         free(key);
     }
 
@@ -914,17 +784,6 @@ cleanup:
     return status;
 }
 
-/**
- * Get Table Row IDs
- *
- * @brief Prepares and executes a SQL statement to select all row IDs from a specified table.
- *
- * @param[in]  table      Name of the table to query
- * @param[out] records    Array of strings to store the retrieved row IDs
- * @param[out] n_records  Pointer to an integer to store the number of retrieved records
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
 status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     ensure_arena_init();
     status_t status = STATUS_OK;
@@ -1021,18 +880,6 @@ cleanup:
     return status;
 }
 
-/**
- * Get Row ID from Primary Keys
- *
- * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
- *
- * @param[in] table     Name of the table to query
- * @param[in] pkfk      Array of pkfk_relation structures containing primary key names and
- * values
- * @param[in] pkfk_length Length of the pkfk_relation array
- *
- * @return The row ID of the matching record on success, -1 on failure
- */
 status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks,
                             int* rowid) {
     ensure_arena_init();

@@ -24,6 +24,7 @@
 #ifndef CACHE_MANAGER_H
 #define CACHE_MANAGER_H
 
+#include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -31,6 +32,7 @@
 #include "const.h"
 #include "errors.h"
 #include "logger.h"
+#include "types.h"
 #include "uthash.h"
 
 /**
@@ -107,12 +109,12 @@ void cache_evict_block(CacheKey* key);
 /**
  * @brief Evicts all cache blocks associated with a specific query path.
  *
- * @param[in] path Pointer to the query path for which to evict cache blocks.
+ * @param[in] toks Pointer to the tokens structure containing the query path information.
  *
  * This function removes all cache blocks from the cache that are associated
  * with the specified query path, effectively clearing the cache for that path.
  */
-void cache_evict_blocks_by_path(const char* path);
+void cache_evict_blocks_from_toks(struct tokens* toks);
 
 /**
  * @brief Retrieves a cache block from the cache based on the given key.

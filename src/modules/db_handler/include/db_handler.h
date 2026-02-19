@@ -210,7 +210,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
  *
  * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
  */
-status_t set_attribute_null(struct tokens* toks);
+status_t set_attribute_empty(struct tokens* toks);
 
 /**
  * Get Row ID from Primary Keys

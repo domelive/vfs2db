@@ -46,16 +46,6 @@ static struct {
            .misses    = 0,
            .evictions = 0};
 
-/**
- * @brief Retrieves a cache block from the cache based on the given key.
- *
- * This function looks up a cache block using the provided key. If the block
- * is found, it is touched to update its position in the LRU list.
- *
- * @param[in] key Pointer to the cache key to look for.
- *
- * @return Pointer to the found cache block, or NULL if not found.
- */
 CacheBlock* cache_get(CacheKey* key) {
     CacheBlock* blk = NULL;
 
@@ -104,23 +94,8 @@ static inline void cache_insert_head(CacheBlock* blk) {
     LOG_TRACE("Inserted block at head: path='%s', offset=%ld", blk->key.query, blk->key.offset);
 }
 
-/**
- * @brief Returns the current number of cache blocks in the cache.
- *
- * @return The number of cache blocks currently stored in the cache.
- *
- */
 int cache_count() { return HASH_COUNT(cache.map); }
 
-/**
- * @brief Inserts a cache block into the cache and updates the LRU list.
- *
- * @param[in] blk Pointer to the cache block to insert.
- *
- * This function adds the specified cache block to the hash map and
- * places it at the head of the LRU list, indicating that it was
- * recently accessed.
- */
 void cache_add_block(CacheBlock* blk) {
     pthread_mutex_lock(&cache.lock);
 
@@ -167,14 +142,6 @@ void cache_add_block(CacheBlock* blk) {
     pthread_mutex_unlock(&cache.lock);
 }
 
-/**
- * @brief Touches a cache block to update its position in the LRU list.
- *
- * @param[in] blk Pointer to the cache block to touch.
- *
- * This function moves the specified cache block to the head of the LRU list,
- * indicating that it was recently accessed.
- */
 void cache_touch(CacheBlock* blk) {
     // If already at head, nothing to do
     if (blk == cache.lru_head)
@@ -194,12 +161,6 @@ void cache_touch(CacheBlock* blk) {
     cache_insert_head(blk);
 }
 
-/**
- * @brief Evicts the least recently used cache block from the cache.
- *
- * This function removes the cache block at the tail of the LRU list,
- * effectively evicting the least recently used block from the cache.
- */
 void cache_evict() {
     if (!cache.lru_tail) {
         LOG_WARN("Cache eviction called but cache is empty");
@@ -232,11 +193,6 @@ void cache_evict() {
     LOG_TRACE("Eviction complete. Total evictions: %lu", cache.evictions);
 }
 
-/**
- * @brief Evicts a specific cache block from the cache based on the given key.
- *
- * @param[in] key Pointer to the cache key of the block to evict.
- */
 void cache_evict_block(CacheKey* key) {
     CacheBlock* blk = NULL;
     LOG_TRACE("Looking for block to evict: path='%s', offset=%ld", key->query, key->offset);
@@ -273,22 +229,23 @@ void cache_evict_block(CacheKey* key) {
     LOG_TRACE("After free");
 }
 
-/**
- * @brief Evicts all cache blocks associated with a specific query path.
- *
- * @param[in] path Pointer to the query path for which to evict cache blocks.
- *
- * This function removes all cache blocks from the cache that are associated
- * with the specified query path, effectively clearing the cache for that path.
- */
-void cache_evict_blocks_by_path(const char* path) {
+void cache_evict_blocks_from_toks(struct tokens* toks) {
+    assert(toks->attribute && toks->record && toks->table &&
+           "Tokens must have table, record, and attribute set for cache eviction");
+
     pthread_mutex_lock(&cache.lock);
+
+    char row_id_path[MAX_SIZE];
+    snprintf(row_id_path, MAX_SIZE, "/%s//", toks->table);
+
+    char path[MAX_SIZE];
+    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
 
     // Iterate through the LRU list and evict blocks that match the specified query path.
     CacheBlock* current = cache.lru_head;
     while (current) {
         CacheBlock* next = current->next;
-        if (strcmp(current->key.query, path) == 0) {
+        if (strcmp(current->key.query, path) == 0 || strcmp(current->key.query, row_id_path) == 0) {
             LOG_DEBUG("Evicting block by path: path='%s', offset=%ld", current->key.query,
                       current->key.offset);
             cache_evict_block(&current->key);
@@ -299,12 +256,6 @@ void cache_evict_blocks_by_path(const char* path) {
     pthread_mutex_unlock(&cache.lock);
 }
 
-/**
- * @brief Prints the current state of the cache for debugging purposes.
- *
- * This function displays the number of blocks in the cache, the hit/miss/eviction
- * statistics, and the order of blocks in the LRU list if the log level is set to TRACE.
- */
 void cache_view() {
     pthread_mutex_lock(&cache.lock);
 
@@ -334,13 +285,6 @@ void cache_view() {
     pthread_mutex_unlock(&cache.lock);
 }
 
-/**
- * @brief Retrieves cache statistics.
- *
- * @param[out] hits Pointer to store the number of cache hits.
- * @param[out] misses Pointer to store the number of cache misses.
- * @param[out] evictions Pointer to store the number of cache evictions.
- */
 void cache_get_stats(unsigned long* hits, unsigned long* misses, unsigned long* evictions) {
     pthread_mutex_lock(&cache.lock);
     if (hits)

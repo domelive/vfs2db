@@ -39,13 +39,6 @@ typedef struct query_t {
     sqlite3_stmt* stmt;
 } query_t;
 
-/**
- * Query Store
- *
- * @brief Array of Query structures representing the SQL queries used in the VFS2DB filesystem.
- * Static queries are prepared at initialization and stored in the `stmt` field, while dynamic
- * queries are formatted and prepared on demand.
- */
 static query_t query_store[] = {
     [QUERY_SELECT_TABLES_NAME] = {"SELECT "
                                   "name "
@@ -113,15 +106,6 @@ static query_t query_store[] = {
                                     "rowid = ?",
                                     1, NULL}};
 
-/**
- * Initialize Query Manager
- *
- * @brief Initializes the Query Manager by preparing static SQL statements.
- *
- * @param[in] db Pointer to the SQLite database connection
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
 status_t qm_init(sqlite3* db) {
     LOG_DEBUG("Initializing Query Manager...");
 
@@ -152,15 +136,6 @@ status_t qm_init(sqlite3* db) {
     return STATUS_OK;
 }
 
-/**
- * Get Query String
- *
- * @brief Retrieves the SQL query string corresponding to the given QueryID.
- *
- * @param[in] qid The QueryID for which to retrieve the SQL query string
- *
- * @return The SQL query string if found, NULL otherwise
- */
 char* qm_get_str(QueryID qid) {
     if (qid < 0 || qid >= QUERY_COUNT) {
         LOG_WARN("Invalid QueryID: %d", qid);
@@ -170,15 +145,6 @@ char* qm_get_str(QueryID qid) {
     return (char*)query_store[qid].sql;
 }
 
-/**
- * Get Static Query Statement
- *
- * @brief Retrieves the prepared SQLite statement corresponding to the given QueryID.
- *
- * @param[in] qid The QueryID for which to retrieve the prepared statement
- *
- * @return Pointer to the prepared SQLite statement if found, NULL otherwise
- */
 sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
     if (qid < 0 || qid >= QUERY_COUNT) {
         LOG_ERROR("Invalid QueryID: %d", qid);
@@ -205,18 +171,6 @@ sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
     return s;
 }
 
-/**
- * Get Dynamic Query Statement
- *
- * @brief Prepares and retrieves a dynamic SQLite statement based on the given QueryID and
- * parameters.
- *
- * @param[in] db  Pointer to the SQLite database connection
- * @param[in] qid The QueryID for which to prepare the dynamic statement
- * @param[in] ... Variadic arguments to format the SQL query string
- *
- * @return Pointer to the prepared SQLite statement if successful, NULL otherwise
- */
 sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
     if (qid < 0 || qid >= QUERY_COUNT) {
         LOG_ERROR("Invalid QueryID: %d", qid);
@@ -252,11 +206,6 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
     return s;
 }
 
-/**
- * Cleanup Query Manager
- *
- * @brief Cleans up the Query Manager by finalizing prepared SQL statements.
- */
 void qm_cleanup() {
     LOG_DEBUG("Cleaning up Query Manager...");
 
