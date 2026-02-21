@@ -248,4 +248,20 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records);
 status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks,
                             int* row_id);
 
+/**
+ * Insert Record into Table
+ * @todo Handle error cases properly
+ *
+ * @brief Inserts a new record into the specified table with the given row ID.
+ *
+ * This function constructs and executes a SQL query to insert a new record
+ * with the specified row ID into the given table.
+ *
+ * @param[in] table Name of the table to insert into
+ * @param[in] row_id Row ID for the new record to be inserted
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t insert_record_into_table(struct tokens* toks);
+
 #endif // DB_HANDLER_H

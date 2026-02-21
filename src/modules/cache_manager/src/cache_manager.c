@@ -129,7 +129,6 @@ void cache_add_block(CacheBlock* blk) {
         LOG_DEBUG("Cache full (%d/%d blocks), evicting least recently used block", current_count,
                   CACHE_BLOCKS);
         cache_evict();
-        cache.evictions++;
     }
 
     // Add to hash map

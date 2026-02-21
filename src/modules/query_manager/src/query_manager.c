@@ -104,7 +104,13 @@ static query_t query_store[] = {
                                     "%s = %s || zeroblob(?) "
                                     "WHERE "
                                     "rowid = ?",
-                                    1, NULL}};
+                                    1, NULL},
+
+    [QUERY_TPL_INSERT_RECORD_INTO_TABLE] = {"INSERT INTO "
+                                            "%s (rowid) "
+                                            "VALUES (%s)",
+                                            1, NULL},
+};
 
 status_t qm_init(sqlite3* db) {
     LOG_DEBUG("Initializing Query Manager...");

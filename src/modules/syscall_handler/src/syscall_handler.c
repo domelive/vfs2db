@@ -575,11 +575,27 @@ cleanup:
 }
 
 int vfs2db_mkdir(const char* path, mode_t mode) {
-    LOG_FUSE_ENTER("mkdir", path);
-
     ensure_arena_init();
 
+    LOG_FUSE_ENTER("mkdir", path);
+
     status_t status = STATUS_OK;
+
+    struct tokens* toks;
+    TRY_NOT_NULL(toks = tokenize_path(path), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to tokenize path '%s'", path);
+
+    // if path is like `/table` we have to create a new table.
+    if (toks->table && !toks->record && !toks->attribute) {
+        LOG_WARN(
+            "mkdir: creating new tables is not supported yet, table creation is not implemented");
+    }
+    // if path is like `/table/record` we have to create a new record in the specified table.
+    else if (toks->table && toks->record && !toks->attribute) {
+        TRY(insert_record_into_table(toks), cleanup, "Failed to insert record into table '%s'",
+            toks->table);
+        LOG_DEBUG("mkdir: record '%s' created in table '%s'", toks->record, toks->table);
+    }
 
 cleanup:
     int code = status_to_errno(status);

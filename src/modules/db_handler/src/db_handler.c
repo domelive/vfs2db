@@ -115,7 +115,16 @@ static inline status_t get_cache_key_from_toks(struct tokens* toks, off_t block_
     // Construct the file path for the cache key based on the table, record, and attribute
     // information from the tokens.
     char path[MAX_SIZE];
-    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    if (toks->table && toks->record && toks->attribute) {
+        snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+    } else if (toks->table && toks->record) {
+        snprintf(path, MAX_SIZE, "/%s//", toks->table, toks->record);
+    } else {
+        LOG_ERROR("Invalid tokens for cache key: table='%s', record='%s', attribute='%s'",
+                  toks->table, toks->record, toks->attribute);
+        return STATUS_DB_ERROR;
+    }
 
     LOG_TRACE("Getting attribute bytes: path='%s', block_offset=%ld", path, block_offset);
 
@@ -395,7 +404,11 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
         // Cache HIT
         if ((blk = cache_get(key)) != NULL) {
             LOG_DEBUG("Cache hit for '%s' at offset %ld", key->query, key->offset);
-            *bytes = (char*)blk->data;
+
+            // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
+            // `*bytes` we strdup because of possible threads evicting the block...
+            *bytes = arena_strdup(arena, (char*)blk->data);
+
             return status;
         }
 
@@ -411,22 +424,36 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  "Failed to build query statement for attribute chunk bytes: '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
 
+    LOG_TRACE("Dynamic query built");
+
     // Bind the record value to the query
     TRY_SQLITE(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
                "Failed to bind record value for chunk query: '%s/%s/%s'", toks->table, toks->record,
                toks->attribute);
+
+    LOG_TRACE("Dynamic query binded");
 
     // Execute the query and check if a row is returned
     TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
                "Failed to execute chunk query for '%s/%s/%s'", toks->table, toks->record,
                toks->attribute);
 
+    LOG_TRACE("Dynamic query executed");
+
     // Retrieve the attribute chunk data from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(data = strdup((char*)sqlite3_column_text(stmt, 0)), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(data = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_DB_ERROR,
                  "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
+    TRY_NOT_NULL(data = strdup(data), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
+                 toks->record, toks->attribute);
+
+    LOG_TRACE("Data retrieved from DB: %s", data);
+
     data_size = (size_t)sqlite3_column_bytes(stmt, 0);
+
+    LOG_TRACE("Data retrieved of size %ld", data_size);
 
     // Calculate the relative offset within the block for the requested attribute chunk and set the
     // output bytes pointer to the correct position within the retrieved data. This allows for
@@ -435,6 +462,8 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     *bytes          = data + relative_offset;
 
     if (cache_enabled) {
+        LOG_TRACE("Inserting new cache block");
+
         // Create a new CacheBlock for the retrieved attribute chunk data.
         TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
                      "Failed to allocate CacheBlock for '%s/%s/%s'", toks->table, toks->record,
@@ -454,6 +483,8 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     }
 
 cleanup:
+    if (key)
+        free(key);
     if (stmt)
         sqlite3_finalize(stmt);
     return status;
@@ -487,9 +518,13 @@ status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size
                toks->table, toks->record, toks->attribute);
 
     // Retrieve the entire attribute value from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(*bytes = arena_strdup(arena, (char*)sqlite3_column_text(stmt, 0)), cleanup,
-                 STATUS_ALLOC_ERROR, "Failed to retrieve attribute bytes for '%s/%s/%s'",
-                 toks->table, toks->record, toks->attribute);
+    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_DB_ERROR,
+                 "Failed to retrieve attribute bytes for '%s/%s/%s'", toks->table, toks->record,
+                 toks->attribute);
+
+    TRY_NOT_NULL(*bytes = arena_strdup(arena, *bytes), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to retrieve attribute bytes for '%s/%s/%s'", toks->table, toks->record,
+                 toks->attribute);
 
     *size = (size_t)sqlite3_column_bytes(stmt, 0);
 
@@ -928,5 +963,49 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
 cleanup:
     if (pstmt)
         sqlite3_finalize(pstmt);
+    return status;
+}
+
+status_t insert_record_into_table(struct tokens* toks) {
+    LOG_TRACE("Inserting record into table: %s/%s", toks->table, toks->record);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to insert a new record into the specified table using the
+    // QUERY_TPL_INSERT_RECORD_INTO_TABLE template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_INSERT_RECORD_INTO_TABLE,
+                                                         toks->table, toks->record),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for inserting record into table: '%s/%s'",
+                 toks->table, toks->record);
+
+    // Execute the INSERT statement to add the new record to the database.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for inserting record into table: '%s/%s'", toks->table,
+               toks->record);
+
+    // Check the number of rows affected by the INSERT operation to confirm that the record was
+    // successfully inserted into the database.
+    int changes = sqlite3_changes(db);
+    LOG_DEBUG("Record inserted successfully, %d rows affected", changes);
+
+    // If caching is enabled, evict any corresponding cache blocks that may exist for the newly
+    // inserted record to ensure that subsequent queries for this record will fetch the updated data
+    // from the database rather than stale data from the cache.
+    if (cache_enabled) {
+        // Evict the corresponding cache blocks, if exists
+        CacheKey* key = NULL;
+        TRY(get_cache_key_from_toks(toks, 0, &key), cleanup,
+            "Failed to get cache key from tokens for eviction of '%s/%s'", toks->table,
+            toks->record);
+        LOG_TRACE("Evicting cache blocks for new record insertion: path='%s'", key->query);
+        cache_evict_blocks_from_toks(toks);
+        free(key);
+    }
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
     return status;
 }
