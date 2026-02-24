@@ -518,7 +518,7 @@ status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size
                toks->table, toks->record, toks->attribute);
 
     // Retrieve the entire attribute value from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_DB_ERROR,
+    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_ISNULL,
                  "Failed to retrieve attribute bytes for '%s/%s/%s'", toks->table, toks->record,
                  toks->attribute);
 
@@ -701,9 +701,22 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         // Read all the attribute bytes
         char*  bytes;
         size_t bytes_size;
-        TRY(get_attribute_all_bytes(toks, &bytes, &bytes_size), cleanup,
-            "Failed to get all attribute bytes for update of '%s/%s/%s'", toks->table, toks->record,
-            toks->attribute);
+
+        status_t read_status = get_attribute_all_bytes(toks, &bytes, &bytes_size);
+
+        // If the attribute value is NULL, we treat it as an empty string for the purpose of the
+        // update. This allows us to apply the update correctly even when the existing value is
+        // NULL.
+        if (read_status == STATUS_ISNULL) {
+            LOG_DEBUG("Attribute value is NULL, treating as empty for update of '%s/%s/%s'",
+                      toks->table, toks->record, toks->attribute);
+            bytes      = arena_strdup(arena, "");
+            bytes_size = 0;
+        } else if (read_status != STATUS_OK) {
+            LOG_ERROR("Failed to read existing attribute value for update of '%s/%s/%s'",
+                      toks->table, toks->record, toks->attribute);
+            goto cleanup;
+        }
 
         // Calculate new size after update
         size_t new_bytes_size = (offset + size > bytes_size) ? offset + size : bytes_size;
@@ -719,7 +732,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         memcpy(new_bytes, bytes, bytes_size);
         memcpy(new_bytes + offset, buffer, size);
 
-        // Write the new a;ttribute bytes
+        // Write the new attribute bytes
         TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE,
                                                              toks->table, toks->attribute),
                      cleanup, STATUS_DB_ERROR,

@@ -110,6 +110,15 @@ static inline char* remove_extension(const char* path) {
 }
 
 static inline int check_symlink(struct tokens* toks) {
+    char*  attr_bytes;
+    size_t attr_size;
+
+    if (get_attribute_all_bytes(toks, &attr_bytes, &attr_size) == STATUS_ISNULL) {
+        LOG_TRACE("Attribute exists for '%s/%s/%s', but since it is NULL, it cannot be a symlink",
+                  toks->table, toks->record, toks->attribute);
+        return 0;
+    }
+
     // Check if table exists in schema
     Schema* table = find_schema_by_name(db_schema, toks->table);
     if (!table) {
@@ -124,6 +133,119 @@ static inline int check_symlink(struct tokens* toks) {
     }
 
     return 0;
+}
+
+static inline bool path_exists(struct tokens* toks) {
+    if (toks->table) {
+        // Check if table exists in schema
+        Schema* table = find_schema_by_name(db_schema, toks->table);
+        if (!table) {
+            LOG_WARN("Table not found in schema: %s", toks->table);
+            return false;
+        }
+
+        // If record is specified, check if it exists
+        if (toks->record) {
+            if (record_exists(toks) != STATUS_OK) {
+                LOG_WARN("Record '%s' not found in table '%s'", toks->record, toks->table);
+                return false;
+            }
+        }
+
+        // If attribute is specified, check if it exists in the schema
+        if (toks->attribute) {
+            if (!find_fk_by_name(table, toks->attribute) &&
+                !find_pk_by_name(table, toks->attribute) &&
+                !find_attribute_by_name(table, toks->attribute)) {
+                LOG_WARN("Attribute '%s' not found in table '%s'", toks->attribute, toks->table);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static inline status_t generate_dotschema_content(const char* table, char* content,
+                                                  size_t* content_size) {
+    if (!table) {
+        LOG_WARN("generate_dotschema_content called with NULL table name");
+        return STATUS_ISNULL;
+    }
+
+    Schema* table_schema = find_schema_by_name(db_schema, table);
+    if (!table_schema) {
+        LOG_WARN("Table not found in schema: %s", table);
+        return STATUS_DB_NOTFOUND;
+    }
+
+    int offset = 0;
+
+    // Primary Keys (PKs)
+    HASH_FOREACH(current_pk, table_schema->pk_head) {
+        LOG_TRACE("PK: %s, Type: %d", current_pk->name, current_pk->sqlite_type);
+
+        offset += snprintf(content + offset, MAX_SIZE - offset, "%s:%d PK\n", current_pk->name,
+                           current_pk->sqlite_type);
+
+        LOG_TRACE("Generated .schema content for PK '%s': %s", current_pk->name, content);
+    }
+
+    // Attributes
+    HASH_FOREACH(current_attr, table_schema->attr_head) {
+        LOG_TRACE("Attribute: %s, Type: %d", current_attr->name, current_attr->sqlite_type);
+
+        offset += snprintf(content + offset, MAX_SIZE - offset, "%s:%d ATTR\n", current_attr->name,
+                           current_attr->sqlite_type);
+
+        LOG_TRACE("Generated .schema content for attribute '%s': %s", current_attr->name, content);
+    }
+
+    // Foreign Keys (FKs)
+    HASH_FOREACH(current_fk, table_schema->fks_head) {
+        LOG_TRACE("FK: %s, Ref Table: %s", current_fk->from, current_fk->table);
+
+        offset += snprintf(content + offset, MAX_SIZE - offset, "%s:%s(%s) FK\n", current_fk->from,
+                           current_fk->table, current_fk->to);
+
+        LOG_TRACE("Generated .schema content for FK '%s': %s", current_fk->from, content);
+    }
+
+    *content_size += offset;
+
+    LOG_DEBUG("Generated .schema content for table '%s': %s", table, content);
+
+    return STATUS_OK;
+}
+
+static inline bool check_dotschema(const char* path) {
+    LOG_TRACE("Checking if path is a .schema file: %s", path);
+
+    struct tokens* toks = tokenize_path(path);
+    if (!toks) {
+        LOG_ERROR("Failed to tokenize path for .schema check: %s", path);
+        return false;
+    }
+
+    if (toks->table) {
+        Schema* table = find_schema_by_name(db_schema, toks->table);
+        if (!table) {
+            LOG_WARN("Table not found in schema: %s", toks->table);
+            return false;
+        }
+
+        LOG_TRACE("Path '%s' corresponds to table '%s'", path, toks->table);
+        LOG_TRACE("Record and attribute components for .schema check: record='%s', attribute='%s'",
+                  toks->record ? toks->record : "(null)",
+                  toks->attribute ? toks->attribute : "(null)");
+
+        if (toks->record && strstr(toks->record, ".schema") != NULL) {
+            LOG_TRACE("Path '%s' is a .schema file", path);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
@@ -230,61 +352,51 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
 
     memset(st, 0, sizeof(*st));
 
-    // If path doesn't end with .vfs2db, it's a directory
+    // If path doesn't end with .vfs2db, it's either a directory or a .schema file
     if (strncmp(&path[strlen(path) - 7], ".vfs2db", 7)) {
         if (strstr(path, ".Trash") != NULL) {
             LOG_TRACE("The system asked for .Trash-xxxx directory");
             return -ENOENT;
         }
 
-        // tokenize path to get table, record, and attribute for schema lookup
-        struct tokens* toks = tokenize_path(path);
-        if (!toks) {
-            LOG_ERROR("Failed to tokenize path: %s", path);
-            LOG_FUSE_EXIT("getattr", -ENOMEM);
-            return -ENOMEM;
-        }
+        // Check if path corresponds to a .schema file, which we will treat as a regular file with
+        // dynamic content generated on read.
+        if (check_dotschema(path)) {
+            LOG_TRACE("getattr: %s is a .schema file", path);
+            st->st_mode  = S_IFREG | 0644;
+            st->st_nlink = 1;
+            st->st_uid   = getuid();
+            st->st_gid   = getgid();
+            st->st_atime = st->st_mtime = time(NULL);
 
-        if (toks->table) {
-            // Check if table exists in schema
-            Schema* table = find_schema_by_name(db_schema, toks->table);
-            if (!table) {
-                LOG_WARN("Table not found in schema: %s", toks->table);
+            st->st_size = 100;
+
+            LOG_TRACE("getattr: %s is a .schema file", path);
+        }
+        // Otherwise, we will treat it as a directory and check if it exists in the schema.
+        else {
+            // tokenize path to get table, record, and attribute for schema lookup
+            struct tokens* toks = tokenize_path(path);
+            if (!toks) {
+                LOG_ERROR("Failed to tokenize path: %s", path);
+                LOG_FUSE_EXIT("getattr", -ENOMEM);
+                return -ENOMEM;
+            }
+
+            if (!path_exists(toks)) {
+                LOG_WARN("Path does not exist: %s", path);
                 LOG_FUSE_EXIT("getattr", -ENOENT);
                 return -ENOENT;
             }
 
-            if (toks->record) {
-                // Check if record exists in database
-                if (record_exists(toks) != STATUS_OK) {
-                    LOG_WARN("Record not found: %s/%s", toks->table, toks->record);
-                    LOG_FUSE_EXIT("getattr", -ENOENT);
-                    return -ENOENT;
-                }
+            st->st_mode  = S_IFDIR | 0755;
+            st->st_nlink = 2;
+            st->st_uid   = getuid();
+            st->st_gid   = getgid();
+            st->st_atime = st->st_mtime = time(NULL);
 
-                if (toks->attribute) {
-                    // Check if attribute exists in schema
-                    if (!find_attribute_by_name(table, toks->attribute) &&
-                        !find_pk_by_name(table, toks->attribute) &&
-                        !find_fk_by_name(table, toks->attribute)) {
-                        LOG_WARN("Attribute not found in schema: %s/%s/%s", toks->table,
-                                 toks->record, toks->attribute);
-                        LOG_FUSE_EXIT("getattr", -ENOENT);
-                        return -ENOENT;
-                    }
-                }
-            }
+            LOG_TRACE("getattr: %s is a directory", path);
         }
-
-        st->st_mode  = S_IFDIR | 0755;
-        st->st_nlink = 2;
-        st->st_uid   = getuid();
-        st->st_gid   = getgid();
-        st->st_atime = st->st_mtime = time(NULL);
-
-        LOG_TRACE("getattr: %s is a directory", path);
-
-        LOG_FUSE_EXIT("getattr", 0);
     }
     // If path ends with .vfs2db, it's a file (either regular or symlink)
     else {
@@ -302,35 +414,10 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             return -ENOMEM;
         }
 
-        if (toks->table) {
-            // Check if table exists in schema
-            Schema* table = find_schema_by_name(db_schema, toks->table);
-            if (!table) {
-                LOG_WARN("Table not found in schema: %s", toks->table);
-                LOG_FUSE_EXIT("getattr", -ENOENT);
-                return -ENOENT;
-            }
-
-            if (toks->record) {
-                // Check if record exists in database
-                if (record_exists(toks) != STATUS_OK) {
-                    LOG_WARN("Record not found: %s/%s", toks->table, toks->record);
-                    LOG_FUSE_EXIT("getattr", -ENOENT);
-                    return -ENOENT;
-                }
-
-                if (toks->attribute) {
-                    // Check if attribute exists in schema
-                    if (!find_attribute_by_name(table, toks->attribute) &&
-                        !find_pk_by_name(table, toks->attribute) &&
-                        !find_fk_by_name(table, toks->attribute)) {
-                        LOG_WARN("Attribute not found in schema: %s/%s/%s", toks->table,
-                                 toks->record, toks->attribute);
-                        LOG_FUSE_EXIT("getattr", -ENOENT);
-                        return -ENOENT;
-                    }
-                }
-            }
+        if (!path_exists(toks)) {
+            LOG_WARN("Path does not exist: %s", path);
+            LOG_FUSE_EXIT("getattr", -ENOENT);
+            return -ENOENT;
         }
 
         // We will treat foreign keys as symlinks and attributes as regular files.
@@ -503,6 +590,8 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     case 1: {
         LOG_DEBUG("readdir: listing records for table '%s'", toks->table);
 
+        filler(buffer, ".schema", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+
         char* record_list[MAX_SIZE];
         int   n_records;
 
@@ -610,6 +699,11 @@ int vfs2db_open(const char* path, struct fuse_file_info* fi) {
 
     ensure_arena_init();
 
+    if (check_dotschema(path)) {
+        LOG_TRACE("Opening .schema file: %s", path);
+        return 0;
+    }
+
     // Remove extension and tokenize path to get table, record, and attribute for schema lookup.
     char* noext_path = remove_extension(path);
     if (!noext_path) {
@@ -673,6 +767,42 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
         return -ENOMEM;
     }
 
+    if (!path_exists(toks)) {
+        LOG_WARN("Path does not exist: %s", path);
+        LOG_FUSE_EXIT("read", -ENOENT);
+        return -ENOENT;
+    }
+
+    if (check_dotschema(path)) {
+        LOG_TRACE("Generating .schema content for %s", path);
+
+        char schema_content[MAX_SIZE];
+        memset(schema_content, 0, sizeof(schema_content));
+        size_t schema_size = 0;
+
+        // Generate the .schema content for the specified table. This will create a textual
+        // representation of the table schema, including its columns, data types, primary keys,
+        // foreign keys, and other relevant information. This allows clients to read the .schema
+        // file to understand the structure of the table they are working with.
+        if (generate_dotschema_content(toks->table, schema_content, &schema_size) != STATUS_OK) {
+            LOG_ERROR("Failed to generate .schema content for table '%s'", toks->table);
+            LOG_FUSE_EXIT("read", -EIO);
+            return -EIO;
+        }
+
+        // Calculate how many bytes we can copy to the buffer based on the requested size and the
+        // total size of the generated .schema content. We need to ensure that we do not read
+        // beyond the end of the content, so we take the minimum of the requested size and the
+        // available bytes.
+        size_t bytes_to_copy = MIN(size, schema_size - offset);
+        memcpy(buffer, schema_content + offset, bytes_to_copy);
+
+        LOG_DEBUG("read: returned %zu bytes of .schema content from offset %ld", bytes_to_copy,
+                  offset);
+        LOG_FUSE_EXIT("read", bytes_to_copy);
+        return bytes_to_copy;
+    }
+
     size_t total_size;
     char*  bytes = NULL;
 
@@ -681,7 +811,8 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     // goes beyond the end of the attribute value.
     if (get_attribute_size(toks, &total_size) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute size");
-        return -1;
+        LOG_FUSE_EXIT("read", -EIO);
+        return -EIO;
     }
 
     // If the offset is beyond the end of the attribute value, we return 0 to indicate EOF.
@@ -695,7 +826,7 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     if (get_attribute_chunk_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute bytes");
         LOG_FUSE_EXIT("read", -EIO);
-        return -1;
+        return -EIO;
     }
 
     // Calculate how many bytes we can copy to the buffer based on the requested size and the total
