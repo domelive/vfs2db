@@ -478,7 +478,8 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
         cache_add_block(blk);
         LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
 
-        free(key);
+        key = NULL; // Ownership transferred to cache block, avoid double free
+
         cache_view();
     }
 
@@ -487,6 +488,7 @@ cleanup:
         free(key);
     if (stmt)
         sqlite3_finalize(stmt);
+
     return status;
 }
 
