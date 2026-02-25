@@ -30,11 +30,12 @@
  *        the hash map of cache blocks and the LRU list pointers.
  */
 static struct {
-    CacheBlock*     map;
-    CacheBlock*     lru_head;
-    CacheBlock*     lru_tail;
-    pthread_mutex_t lock;
+    CacheBlock*     map;      /*< Hash map of cache blocks, keyed by CacheKey */
+    CacheBlock*     lru_head; /*< Pointer to the head of the LRU list (most recently used block) */
+    CacheBlock*     lru_tail; /*< Pointer to the tail of the LRU list (least recently used block) */
+    pthread_mutex_t lock;     /*< Mutex to protect access to the cache data structures */
 
+    // Cache statistics for monitoring and debugging purposes.
     unsigned long hits;
     unsigned long misses;
     unsigned long evictions;

@@ -72,10 +72,15 @@ static inline struct tokens* tokenize_path(const char* path) {
         cursor++;
 
     // Tokenize the path using '/' as a delimiter
-    char* t         = strtok(cursor, "/");
-    toks->table     = t ? arena_strdup(arena, t) : NULL;
-    t               = strtok(NULL, "/");
-    toks->record    = t ? arena_strdup(arena, t) : NULL;
+    // First token is the table name
+    char* t     = strtok(cursor, "/");
+    toks->table = t ? arena_strdup(arena, t) : NULL;
+
+    // Second token is the record name
+    t            = strtok(NULL, "/");
+    toks->record = t ? arena_strdup(arena, t) : NULL;
+
+    // Third token is the attribute name (we will remove the .vfs2db extension later if present)
     t               = strtok(NULL, "/");
     toks->attribute = t ? arena_strdup(arena, t) : NULL;
 
@@ -248,6 +253,8 @@ static inline bool check_dotschema(const char* path) {
     return false;
 }
 
+// FIX: maybe it is best to return a status_t and use an output parameter for the boolean result, to
+// have better error handling and logging in the caller.
 void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     LOG_INFO("Initializing VFS2DB filesystem...");
 
@@ -344,12 +351,15 @@ void vfs2db_destroy(void* private_data) {
 
 int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi) {
     (void)fi;
-    status_t status = STATUS_OK;
-
-    LOG_FUSE_ENTER("getattr", path);
 
     ensure_arena_init();
 
+    LOG_FUSE_ENTER("getattr", path);
+
+    status_t status = STATUS_OK;
+
+    // Initialize the stat structure to zero to avoid returning uninitialized values for fields we
+    // don't set.
     memset(st, 0, sizeof(*st));
 
     // If path doesn't end with .vfs2db, it's either a directory or a .schema file
@@ -453,12 +463,13 @@ cleanup:
 }
 
 int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size) {
-    status_t status = STATUS_OK;
+    ensure_arena_init();
 
     LOG_FUSE_ENTER("getxattr", path);
-    LOG_TRACE("getxattr: name=%s, bufsize=%zu", name, size);
 
-    ensure_arena_init();
+    status_t status = STATUS_OK;
+
+    LOG_TRACE("getxattr: name=%s, bufsize=%zu", name, size);
 
     // Validate attribute name
     if (strcmp(name, "user.type") != 0) {
@@ -534,11 +545,11 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     (void)fi;
     (void)flags;
 
-    status_t status = STATUS_OK;
+    ensure_arena_init();
 
     LOG_FUSE_ENTER("readdir", path);
 
-    ensure_arena_init();
+    status_t status = STATUS_OK;
 
     // Add current and parent directory entries. This is required for proper directory navigation.
     filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
@@ -693,12 +704,14 @@ cleanup:
 }
 
 int vfs2db_open(const char* path, struct fuse_file_info* fi) {
-    status_t status = STATUS_OK;
+    ensure_arena_init();
 
     LOG_FUSE_ENTER("open", path);
 
-    ensure_arena_init();
+    status_t status = STATUS_OK;
 
+    // Check if path corresponds to a .schema file, which we will treat as a regular file with
+    // dynamic content generated on read.
     if (check_dotschema(path)) {
         LOG_TRACE("Opening .schema file: %s", path);
         return 0;
@@ -730,13 +743,16 @@ int vfs2db_open(const char* path, struct fuse_file_info* fi) {
     // If file doesn't exist and O_CREAT isn't specified, error
     // /metrics/123/attribute.vfs2db
 
-    // If O_CREAT
+    // If O_CREAT is specified, we should create the file (i.e., insert a new record or attribute in
+    // the database). However, since we haven't implemented file creation yet, we will return an
+    // error for now.
     if (flags & O_CREAT) {
         LOG_WARN("open: O_CREAT flag is not supported yet, file creation is not implemented");
         return 0;
     }
 
-    // If O_TRUNC
+    // If O_TRUNC is specified, we should truncate the file (i.e., set the attribute value to NULL
+    // in the database).
     if (flags & O_TRUNC) {
         vfs2db_truncate(path, 0, NULL);
     }
@@ -748,10 +764,10 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
                 struct fuse_file_info* fi) {
     (void)fi;
 
+    ensure_arena_init();
+
     LOG_FUSE_ENTER("read", path);
     LOG_TRACE("read: size=%zu, offset=%ld", size, offset);
-
-    ensure_arena_init();
 
     // Remove extension and tokenize path to get table, record, and attribute for schema lookup.
     char* noext_path = remove_extension(path);
@@ -767,12 +783,15 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
         return -ENOMEM;
     }
 
+    // If any component is missing, we will treat it as a non-existent file.
     if (!path_exists(toks)) {
         LOG_WARN("Path does not exist: %s", path);
         LOG_FUSE_EXIT("read", -ENOENT);
         return -ENOENT;
     }
 
+    // Check if path corresponds to a .schema file. If it does, we will generate the .schema content
+    // dynamically based on the database schema and return it to the client.
     if (check_dotschema(path)) {
         LOG_TRACE("Generating .schema content for %s", path);
 
@@ -879,11 +898,11 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
 }
 
 int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
-    status_t status = STATUS_OK;
-
     LOG_FUSE_ENTER("truncate", path);
 
     ensure_arena_init();
+
+    status_t status = STATUS_OK;
 
     // Remove extension and tokenize path to get table, record, and attribute for schema lookup.
     char* noext_path = remove_extension(path);

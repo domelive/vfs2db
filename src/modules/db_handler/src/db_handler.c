@@ -131,13 +131,13 @@ static inline status_t get_cache_key_from_toks(struct tokens* toks, off_t block_
     // Allocate a new CacheKey structure to store the cache key information for the specified path
     // and block offset. The CacheKey will be used to identify the corresponding block of data in
     // the cache for read and write operations on the attribute file in the VFS2DB filesystem.
-    TRY_NOT_NULL(*key = calloc(1, sizeof(CacheKey)), key_alloc_error, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(*key = calloc(1, sizeof(CacheKey)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate CacheKey for path '%s'", path);
 
     strncpy((*key)->query, path, strlen(path) + 1);
     (*key)->offset = block_offset;
 
-key_alloc_error:
+cleanup:
     return status;
 }
 
@@ -495,10 +495,10 @@ cleanup:
 status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
     ensure_arena_init();
 
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
+
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
-
-    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
     // Build the statement to retrieve the entire attribute value for the specified table, record,
     // and attribute using the QUERY_TPL_SELECT_ATTRIBUTE template.
@@ -537,11 +537,10 @@ cleanup:
 }
 
 status_t get_attribute_type(struct tokens* toks, int* type) {
-    status_t status = STATUS_OK;
-
     LOG_TRACE("Getting attribute type: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
-    Schema* table_schema = NULL;
+    status_t status       = STATUS_OK;
+    Schema*  table_schema = NULL;
 
     // Find the schema for the specified table in the database schema.
     TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, toks->table), cleanup,
@@ -628,16 +627,16 @@ static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size,
                                 off_t offset) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
+    LOG_TRACE("Updating attribute value: %s/%s/%s (size=%zu, offset=%ld)", toks->table,
+              toks->record, toks->attribute, size, offset);
+
+    status_t      status      = STATUS_OK;
     sqlite3_stmt* stmt        = NULL;
     sqlite3_blob* blob_handle = NULL;
-
-    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu)", toks->table, toks->record, toks->attribute,
-              size);
+    int           type;
 
     // Determine the SQLite data type of the attribute to decide how to perform the update.
-    int type;
     TRY(get_attribute_type(toks, &type), cleanup,
         "Failed to get attribute type for update of '%s/%s/%s'", toks->table, toks->record,
         toks->attribute);
@@ -701,9 +700,8 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
     // require a full read-modify-write cycle.
     else {
         // Read all the attribute bytes
-        char*  bytes;
-        size_t bytes_size;
-
+        char*    bytes;
+        size_t   bytes_size;
         status_t read_status = get_attribute_all_bytes(toks, &bytes, &bytes_size);
 
         // If the attribute value is NULL, we treat it as an empty string for the purpose of the
@@ -784,11 +782,11 @@ cleanup:
 
 status_t set_attribute_empty(struct tokens* toks) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
-    LOG_DEBUG("Setting attribute to empty: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_TRACE("Setting attribute to empty: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
-    sqlite3_stmt* stmt = NULL;
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
 
     // Build the UPDATE statement to set the specified attribute to empty for the given table and
     // record using the QUERY_TPL_UPDATE_ATTRIBUTE template.
@@ -836,13 +834,13 @@ cleanup:
 
 status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
     LOG_TRACE("Getting row IDs for table: %s", table);
 
+    status_t      status = STATUS_OK;
     sqlite3_stmt* stmt;
+    CacheKey*     key = NULL;
 
-    CacheKey* key = NULL;
     if (cache_enabled) {
         struct tokens toks = {.table = table, .attribute = "", .record = ""};
 
@@ -930,18 +928,17 @@ cleanup:
     return status;
 }
 
+// FIX: this function should be implemented better using the query manager prepared statements
 status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks,
                             int* rowid) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
     LOG_TRACE("Getting rowid from PKs for table: %s (num_fks=%d)", table, num_fks);
 
-    // FIX: this function should be implemented better using the query manager prepared statements
+    status_t      status = STATUS_OK;
     sqlite3_stmt* pstmt;
-
-    int  str_len = 0;
-    char query_str[1024];
+    int           str_len = 0;
+    char          query_str[1024];
 
     // Build the SQL query string to select the row ID from the specified table based on the
     // provided primary key values.
@@ -1015,7 +1012,19 @@ status_t insert_record_into_table(struct tokens* toks) {
             "Failed to get cache key from tokens for eviction of '%s/%s'", toks->table,
             toks->record);
         LOG_TRACE("Evicting cache blocks for new record insertion: path='%s'", key->query);
-        cache_evict_blocks_from_toks(toks);
+
+        // We cannot evict blocks using toks directly, because we want to evict all blocks related
+        // to the record (all attributes), so we create a new toks with empty attribute for
+        // eviction.
+        // TODO: make a separate function that takes the path. Maybe it is easier like that.
+        struct tokens toks_for_eviction = {
+            .table     = toks->table,
+            .record    = toks->record,
+            .attribute = "", // Evict all attributes for the record
+        };
+
+        cache_evict_blocks_from_toks(&toks_for_eviction);
+
         free(key);
     }
 
