@@ -61,6 +61,22 @@ static query_t query_store[] = {
                                      "ON ti.name = fk.\"from\";",
                                      1, NULL},
 
+    [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
+                                            "%s IS NULL "
+                                            "FROM "
+                                            "%s "
+                                            "WHERE "
+                                            "rowid = ?",
+                                            1, NULL},
+
+    [QUERY_TPL_SELECT_ATTRIBUTE_SIZE] = {"SELECT "
+                                         "LENGTH(%s) "
+                                         "FROM "
+                                         "%s "
+                                         "WHERE "
+                                         "rowid = ?",
+                                         1, NULL},
+
     [QUERY_TPL_SELECT_ATTRIBUTE] = {"SELECT "
                                     "%s "
                                     "FROM "
@@ -101,7 +117,7 @@ static query_t query_store[] = {
     [QUERY_TPL_UPDATE_ZERO_BLOB] = {"UPDATE "
                                     "%s "
                                     "SET "
-                                    "%s = %s || zeroblob(?) "
+                                    "%s = CAST(IFNULL(%s, X'') || ? AS BLOB) "
                                     "WHERE "
                                     "rowid = ?",
                                     1, NULL},

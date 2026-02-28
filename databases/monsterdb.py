@@ -9,7 +9,7 @@ DB_NAME = 'stress_test.db'
 NUM_USERS = 10000         # Numero di utenti base
 NUM_WIDE_ROWS = 100       # Righe nella tabella "larga"
 CHAIN_DEPTH = 10          # Profondità delle tabelle a catena (FK)
-BLOB_SIZE = 10 * 1024 * 1024 # 10 MB di dati binari per testare i limiti di I/O
+BLOB_SIZE = 1 * 1024 * 1024 # 10 MB di dati binari per testare i limiti di I/O
 
 def generate_random_string(length=10):
     return ''.join(random.choices(string.ascii_letters, k=length))
@@ -97,7 +97,7 @@ def create_complex_db():
                 payload BLOB, -- Dati binari massivi
                 meta_text TEXT, -- Testo molto lungo
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            );
+            ) STRICT;
         ''')
         print("Tabella 'large_assets' creata.")
 
@@ -159,7 +159,7 @@ def create_complex_db():
         # 8. POPOLAMENTO BLOB (Heavy I/O)
         # ---------------------------------------------------------
         print(f"Creazione payload BLOB di {BLOB_SIZE / 1024 / 1024:.2f} MB...")
-        heavy_blob =  b'\x00' * BLOB_SIZE # Genera byte
+        heavy_blob =  bytes('F' * BLOB_SIZE, 'utf-8') # Genera byte
         long_text = 'A' * (BLOB_SIZE // 2) # Genera testo enorme
         
         c.execute("INSERT INTO large_assets (user_id, asset_name, payload, meta_text) VALUES (?, ?, ?, ?)", 

@@ -346,6 +346,51 @@ cleanup:
     return status;
 }
 
+static inline status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
+    ensure_arena_init();
+
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt;
+
+    // Build the statement
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+                                                         toks->attribute, toks->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for getting all attribute bytes: '%s/%s/%s'",
+                 toks->table, toks->record, toks->attribute);
+
+    // Bind the record value to the query
+    TRY_SQLITE(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+               "Failed to bind record value for getting all attribute bytes: '%s/%s/%s'",
+               toks->table, toks->record, toks->attribute);
+
+    // Execute the query and check if a row is returned
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
+               "Failed to execute query for getting all attribute bytes for '%s/%s/%s'",
+               toks->table, toks->record, toks->attribute);
+
+    // Retrieve the attribute data from the query result and calculate its size in bytes.
+    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_ISNULL,
+                 "Failed to retrieve attribute data for '%s/%s/%s'", toks->table, toks->record,
+                 toks->attribute);
+
+    // Arena_strdup the bytes to ensure they are stored in the thread-local arena for efficient
+    // memory management.
+    TRY_NOT_NULL(*bytes = arena_strdup(arena, *bytes), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate attribute data for '%s/%s/%s'", toks->table, toks->record,
+                 toks->attribute);
+
+    *size = (size_t)sqlite3_column_bytes(stmt, 0);
+    LOG_TRACE("Data retrieved of size %ld", *size);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
 status_t get_attribute_size(struct tokens* toks, size_t* size) {
     ensure_arena_init();
 
@@ -355,7 +400,7 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
     sqlite3_stmt* stmt;
 
     // Build the statement
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE_SIZE,
                                                          toks->attribute, toks->table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for attribute size: '%s/%s/%s'", toks->table,
@@ -372,7 +417,7 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
                toks->attribute);
 
     // Calculate the bytes of the attribute
-    *size = sqlite3_column_bytes(stmt, 0);
+    *size = sqlite3_column_int(stmt, 0);
 
 cleanup:
     if (stmt)
@@ -449,8 +494,6 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
-    LOG_TRACE("Data retrieved from DB: %s", data);
-
     data_size = (size_t)sqlite3_column_bytes(stmt, 0);
 
     LOG_TRACE("Data retrieved of size %ld", data_size);
@@ -492,7 +535,7 @@ cleanup:
     return status;
 }
 
-status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
+status_t is_attribute_null(struct tokens* toks, bool* is_null) {
     ensure_arena_init();
 
     LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
@@ -500,12 +543,12 @@ status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
-    // Build the statement to retrieve the entire attribute value for the specified table, record,
-    // and attribute using the QUERY_TPL_SELECT_ATTRIBUTE template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+    // Build the statement to check if the specified attribute value is NULL for the given record in
+    // the specified table, using the QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL,
                                                          toks->attribute, toks->table),
                  cleanup, STATUS_DB_ERROR,
-                 "Failed to build query statement for getting all attribute bytes: '%s/%s/%s'",
+                 "Failed to build query statement for checking if attribute is NULL: '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
 
     // Bind the record value to the query to specify which record's attribute value to retrieve.
@@ -516,19 +559,10 @@ status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size
     // Execute the query and check if a row is returned, indicating that the attribute value was
     // successfully retrieved.
     TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
-               "Failed to execute query for getting all attribute bytes for '%s/%s/%s'",
+               "Failed to execute query for checking if attribute is NULL for '%s/%s/%s'",
                toks->table, toks->record, toks->attribute);
 
-    // Retrieve the entire attribute value from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_ISNULL,
-                 "Failed to retrieve attribute bytes for '%s/%s/%s'", toks->table, toks->record,
-                 toks->attribute);
-
-    TRY_NOT_NULL(*bytes = arena_strdup(arena, *bytes), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to retrieve attribute bytes for '%s/%s/%s'", toks->table, toks->record,
-                 toks->attribute);
-
-    *size = (size_t)sqlite3_column_bytes(stmt, 0);
+    *is_null = sqlite3_column_int(stmt, 0);
 
 cleanup:
     if (stmt)
@@ -641,9 +675,9 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         "Failed to get attribute type for update of '%s/%s/%s'", toks->table, toks->record,
         toks->attribute);
 
-    // If the attribute is of type TEXT or BLOB, we can use the SQLite Blob I/O API to perform
+    // If the attribute is of type BLOB, we can use the SQLite Blob I/O API to perform
     // in-place updates without needing to read the entire value into memory. This allows for
-    // efficient updates of large TEXT or BLOB attributes by directly writing to the database file
+    // efficient updates of large BLOB attributes by directly writing to the database file
     // at the correct offset.
     if (type == SQLITE_BLOB) {
         // Get current attribute size
@@ -668,7 +702,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
                          "Failed to build query statement for blob expansion of '%s/%s/%s'",
                          toks->table, toks->record, toks->attribute);
 
-            TRY_SQLITE(sqlite3_bind_int(stmt, 1, (int)expand_by), SQLITE_OK, cleanup,
+            TRY_SQLITE(sqlite3_bind_zeroblob(stmt, 1, (int)expand_by), SQLITE_OK, cleanup,
                        "Failed to bind expand size for blob expansion of '%s/%s/%s'", toks->table,
                        toks->record, toks->attribute);
 
@@ -694,9 +728,9 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
         LOG_DEBUG("Blob updated in-place via Blob I/O (offset=%ld, size=%zu)", offset, size);
     }
-    // For other data types (e.g., INTEGER, FLOAT), we need to read the entire attribute value into
-    // memory, apply the update to the in-memory value, and then write the updated value back to the
-    // database. This is necessary because non-BLOB types cannot be updated in-place and
+    // For other data types (e.g., TEXT, INTEGER, FLOAT), we need to read the entire attribute value
+    // into memory, apply the update to the in-memory value, and then write the updated value back
+    // to the database. This is necessary because non-BLOB types cannot be updated in-place and
     // require a full read-modify-write cycle.
     else {
         // Read all the attribute bytes
@@ -724,7 +758,8 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
         // Allocate new buffer for the updated attribute value
         char* new_bytes;
-        TRY_NOT_NULL(new_bytes = arena_alloc(arena, new_bytes_size), cleanup, STATUS_ALLOC_ERROR,
+        TRY_NOT_NULL(new_bytes = arena_calloc(arena, 1, new_bytes_size + 1), cleanup,
+                     STATUS_ALLOC_ERROR,
                      "Failed to allocate buffer for updated attribute value for '%s/%s/%s'",
                      toks->table, toks->record, toks->attribute);
 
@@ -797,9 +832,21 @@ status_t set_attribute_empty(struct tokens* toks) {
                  toks->table, toks->record, toks->attribute);
 
     // NOTE: it should NOT nullify the field, because it can have a 'NOT NULL' constraint
-    TRY_SQLITE(sqlite3_bind_text(stmt, 1, "", -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
-               "Failed to bind empty string for setting attribute to empty for '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+    // Get the attribute type to bind the empty value correctly based on its SQLite type
+    int type;
+    TRY(get_attribute_type(toks, &type), cleanup,
+        "Failed to get attribute type for setting attribute to empty for '%s/%s/%s'", toks->table,
+        toks->record, toks->attribute);
+
+    if (type == SQLITE_BLOB) {
+        TRY_SQLITE(sqlite3_bind_zeroblob(stmt, 1, 0), SQLITE_OK, cleanup,
+                   "Failed to bind empty blob for setting attribute to empty for '%s/%s/%s'",
+                   toks->table, toks->record, toks->attribute);
+    } else {
+        TRY_SQLITE(sqlite3_bind_text(stmt, 1, "", -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+                   "Failed to bind empty string for setting attribute to empty for '%s/%s/%s'",
+                   toks->table, toks->record, toks->attribute);
+    }
 
     // Bind the record ID for the WHERE clause to specify which record's attribute value should be
     // set to empty.

@@ -114,30 +114,43 @@ static inline char* remove_extension(const char* path) {
     return noext_path;
 }
 
-static inline int check_symlink(struct tokens* toks) {
-    char*  attr_bytes;
-    size_t attr_size;
+static inline status_t check_symlink(struct tokens* toks, bool* is_symlink) {
+    status_t status = STATUS_OK;
 
-    if (get_attribute_all_bytes(toks, &attr_bytes, &attr_size) == STATUS_ISNULL) {
-        LOG_TRACE("Attribute exists for '%s/%s/%s', but since it is NULL, it cannot be a symlink",
-                  toks->table, toks->record, toks->attribute);
-        return 0;
+    *is_symlink = false;
+
+    bool is_null = false;
+    TRY(is_attribute_null(toks, &is_null), cleanup,
+        "Failed to check if attribute is NULL for %s/%s/%s", toks->table, toks->record,
+        toks->attribute);
+
+    LOG_TRACE("Attribute null check for '%s/%s/%s': is_null=%d", toks->table, toks->record,
+              toks->attribute, is_null);
+
+    if (is_null) {
+        LOG_TRACE("Attribute is NULL, treating as symlink for '%s/%s/%s'", toks->table,
+                  toks->record, toks->attribute);
+        *is_symlink = false;
+        goto cleanup;
     }
 
     // Check if table exists in schema
     Schema* table = find_schema_by_name(db_schema, toks->table);
     if (!table) {
         LOG_WARN("Table not found in schema: %s", toks->table);
-        return 0;
+        *is_symlink = false;
+        goto cleanup;
     }
 
     // Check if attribute is a foreign key in the table schema
     if (find_fk_by_name(table, toks->attribute)) {
         LOG_TRACE("Attribute '%s' is a foreign key (symlink)", toks->attribute);
-        return 1;
+        *is_symlink = true;
+        goto cleanup;
     }
 
-    return 0;
+cleanup:
+    return status;
 }
 
 static inline bool path_exists(struct tokens* toks) {
@@ -431,7 +444,10 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
         }
 
         // We will treat foreign keys as symlinks and attributes as regular files.
-        int is_symlink = check_symlink(toks);
+        bool is_symlink;
+        TRY(check_symlink(toks, &is_symlink), cleanup,
+            "Failed to check if attribute is a symlink for %s", path);
+
         if (is_symlink) {
             st->st_mode  = S_IFLNK | 0644;
             st->st_nlink = 1;
@@ -453,6 +469,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             path);
 
         st->st_size = attr_size;
+
         LOG_TRACE("getattr: size=%zu", attr_size);
     }
 

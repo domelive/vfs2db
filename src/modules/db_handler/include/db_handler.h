@@ -126,23 +126,21 @@ status_t record_exists(struct tokens* toks);
 status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes);
 
 /**
- * Get Attribute Bytes
+ * Is Attribute NULL
  * @todo Handle error cases properly
  *
- * @brief Retrieves the bytes of a specific attribute for a given record in a table.
+ * @brief Checks if a specific attribute value is NULL for a given record in a table.
  *
- * This function executes a SQL query to fetch the attribute value
- * and returns it as a dynamically allocated string.
+ * This function executes a SQL query to determine if the specified attribute value
+ * is NULL in the database and returns the result through the `is_null` output parameter.
  *
- * @param[in]  toks  Pointer to tokens structure containing table, record, and attribute
- * information
- * @param[out] bytes Pointer to a char pointer where the attribute value will be stored
- * @param[out] size  Pointer to a size_t variable where the size of the attribute value will be
- * stored
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * @param[out] is_null Pointer to an integer where the result will be stored (1 if NULL, 0 if not
+ * NULL)
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size);
+status_t is_attribute_null(struct tokens* toks, bool* is_null);
 
 /**
  * Get Attribute Type

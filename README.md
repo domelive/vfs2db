@@ -422,6 +422,7 @@ fusermount3 -u /tmp/test
 
 - `set_attribute_empty` function does not work for `NOT NULL` attributes.
 - `vfs2db_readlink` syscall does not work for tables with multiple FKs pointing to the same PK in another table.
+- `memory_arena` module does not support allocations larger than the arena size (5 MB by default).
 
 ## License
 
