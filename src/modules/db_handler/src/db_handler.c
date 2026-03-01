@@ -141,6 +141,32 @@ cleanup:
     return status;
 }
 
+static inline status_t tokenize_dot_schema_column(const char* column_name, DotSchemaTokens** toks) {
+    status_t status = STATUS_OK;
+
+    // Allocate a new DotSchemaTokens structure to store the parsed components of the .schema column
+    // name, which follows the format: name.TYPE.ATTR.vfs2db
+    TRY_NOT_NULL(*toks = arena_calloc(arena, 1, sizeof(DotSchemaTokens)), cleanup,
+                 STATUS_ALLOC_ERROR, "Failed to allocate DotSchemaTokens for column '%s'",
+                 column_name);
+
+    // Tokenize the path using '/' as a delimiter
+    // First token is the table name
+    char* t              = strtok(column_name, ".");
+    (*toks)->column_name = t ? arena_strdup(arena, t) : NULL;
+
+    // Second token is the record name
+    t                    = strtok(NULL, ".");
+    (*toks)->column_type = t ? arena_strdup(arena, t) : NULL;
+
+    // Third token is the attribute name (we will remove the .vfs2db extension later if present)
+    t                    = strtok(NULL, ".");
+    (*toks)->column_spec = t ? arena_strdup(arena, t) : NULL;
+
+cleanup:
+    return status;
+}
+
 status_t init_db_schema(DbSchema* db_schema) {
     status_t status = STATUS_OK;
 
@@ -1074,6 +1100,106 @@ status_t insert_record_into_table(struct tokens* toks) {
 
         free(key);
     }
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t create_empty_table(const char* table) {
+    LOG_TRACE("Creating empty table: %s", table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to create a new empty table with the specified name using
+    // the QUERY_TPL_CREATE_EMPTY_TABLE template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_CREATE_EMPTY_TABLE, table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for creating empty table '%s'", table);
+
+    // Execute the CREATE TABLE statement to add the new empty table to the database.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for creating empty table '%s'", table);
+
+    LOG_DEBUG("Empty table created successfully: %s", table);
+
+    // After creating the new empty table in the database, we need to update our in-memory schema
+    // representation to include the new table.
+    Schema* new_schema;
+    TRY_NOT_NULL(new_schema = malloc(sizeof(Schema)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate schema for new table '%s'", table);
+
+    // Initialize the new schema for the created table with its name and empty lists for primary
+    // keys, attributes, and foreign keys.
+    TRY_NOT_NULL(new_schema->name = strdup(table), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new schema of table '%s'", table);
+    new_schema->pk_head   = NULL;
+    new_schema->attr_head = NULL;
+    new_schema->fks_head  = NULL;
+
+    // Since every table must have a primary key, we create a default primary key named "rowid" of
+    // type INTEGER for the new table.
+    Pk* new_pk;
+    TRY_NOT_NULL(new_pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate PK for new table '%s'", table);
+    TRY_NOT_NULL(new_pk->name = strdup("rowid"), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate PK name for new table '%s'", table);
+    new_pk->sqlite_type = SQLITE_INTEGER;
+
+    // Add the new primary key to the new schema and then add the new schema to the database schema
+    // to ensure that our in-memory representation of the database schema is consistent with the
+    // actual state of the database after creating the new table.
+    add_pk_to_schema(new_schema, new_pk);
+    add_schema(db_schema, new_schema);
+    LOG_DEBUG("mkdir: schema for table '%s' created with PK 'rowid'", table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t delete_schema_column(struct tokens* toks) {
+    ensure_arena_init();
+    LOG_TRACE("Deleting schema column: %s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    DotSchemaTokens* ds_toks;
+    TRY(tokenize_dot_schema_column(toks->attribute, &ds_toks), cleanup,
+        "Failed to parse dot schema tokens for attribute '%s'", toks->attribute);
+
+    // Build the dynamic query statement to delete a column from the specified table using the
+    // QUERY_TPL_DELETE_SCHEMA_COLUMN template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_DROP_SCHEMA_COLUMN,
+                                                         toks->table, ds_toks->column_name),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for deleting schema column '%s/%s/%s'",
+                 toks->table, toks->record, ds_toks->column_name);
+
+    // Execute the ALTER TABLE statement to delete the specified column from the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for deleting schema column '%s/%s/%s'", toks->table,
+               toks->record, ds_toks->column_name);
+
+    LOG_DEBUG("Schema column deleted successfully: %s/%s/%s", toks->table, toks->record,
+              ds_toks->column_name);
+
+    // After deleting the column from the database table, we need to update our in-memory schema
+    // representation to reflect the change by removing the corresponding attribute from the schema
+    // of the affected table.
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, toks->table), cleanup,
+                 STATUS_DB_ERROR, "Table '%s' not found in schema for deleting column",
+                 toks->table);
+    remove_attribute_from_schema(table_schema, ds_toks->column_name);
+    remove_pk_from_schema(table_schema, ds_toks->column_name);
+    remove_fk_from_schema(table_schema, ds_toks->column_name);
+    LOG_DEBUG("Schema updated to remove attribute '%s' from table '%s'", ds_toks->column_name,
+              toks->table);
 
 cleanup:
     if (stmt)

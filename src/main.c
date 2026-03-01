@@ -42,6 +42,7 @@ static const struct fuse_operations vfs2db_oper = {
     .mkdir    = vfs2db_mkdir,
     .open     = vfs2db_open,
     .read     = vfs2db_read,
+    .unlink   = vfs2db_unlink,
     .write    = vfs2db_write,
     .truncate = vfs2db_truncate,
     .create   = vfs2db_create,

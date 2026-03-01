@@ -153,6 +153,18 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
                 struct fuse_file_info* fi);
 
 /**
+ * VFS2DB Unlink
+ *
+ * @brief Deletes a file in the VFS2DB filesystem, which corresponds to deleting an attribute or
+ * record from the database. This function is currently a placeholder and not implemented yet.
+ *
+ * @param[in] path    The file path to delete
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_unlink(const char* path);
+
+/**
  * VFS2DB Write
  *
  * @brief Writes data to a file in the VFS2DB filesystem, updating the value of an attribute.

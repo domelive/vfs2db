@@ -126,6 +126,16 @@ static query_t query_store[] = {
                                             "%s (rowid) "
                                             "VALUES (%s)",
                                             1, NULL},
+
+    [QUERY_TPL_CREATE_EMPTY_TABLE] = {"CREATE TABLE IF NOT EXISTS "
+                                      "%s (rowid INTEGER PRIMARY KEY AUTOINCREMENT)",
+                                      1, NULL},
+
+    [QUERY_TPL_DROP_SCHEMA_COLUMN] = {"ALTER TABLE "
+                                      "%s "
+                                      "DROP COLUMN "
+                                      "%s",
+                                      1, NULL},
 };
 
 status_t qm_init(sqlite3* db) {

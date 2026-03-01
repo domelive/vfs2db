@@ -48,7 +48,6 @@ extern DbSchema* db_schema;
 
 /**
  * Initialize Database Schema
- * @todo Handle error cases properly
  *
  * @brief Initializes the DbSchema structure by retrieving table names
  *        from the database.
@@ -71,7 +70,6 @@ status_t init_db_schema(DbSchema* db_schema);
 
 /**
  * Initialize Schema Structure
- * @todo Handle error cases properly
  *
  * @brief Initializes the Schema structure by retrieving table information
  *        from the database using `PRAGMA` statements.
@@ -111,7 +109,6 @@ status_t record_exists(struct tokens* toks);
 
 /**
  * Get Attribute Size
- * @todo Handle error cases properly
  *
  * @brief Retrieves the size (in bytes) of a specific attribute value
  *        for a given record in a table.
@@ -127,7 +124,6 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
 /**
  * Is Attribute NULL
- * @todo Handle error cases properly
  *
  * @brief Checks if a specific attribute value is NULL for a given record in a table.
  *
@@ -144,7 +140,6 @@ status_t is_attribute_null(struct tokens* toks, bool* is_null);
 
 /**
  * Get Attribute Type
- * @todo Handle error cases properly
  *
  * @brief Retrieves the SQLite data type of a specific attribute value
  *        for a given record in a table.
@@ -160,7 +155,6 @@ status_t get_attribute_size(struct tokens* toks, size_t* size);
 
 /**
  * Update Attribute Value
- * @todo Handle error cases properly
  *
  * @brief Updates a specific attribute value for a given record in a table.
  *
@@ -182,7 +176,6 @@ status_t get_attribute_type(struct tokens* toks, int* type);
 
 /**
  * Get Table Row IDs
- * @todo Handle error cases properly
  *
  * @brief Retrieves the row IDs of all records in a specified table.
  *
@@ -199,7 +192,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
 /**
  * Set Attribute to NULL
- * @todo Handle error cases properly
  *
  * @brief Sets a specific attribute value to NULL for a given record in a table.
  *
@@ -212,7 +204,6 @@ status_t set_attribute_empty(struct tokens* toks);
 
 /**
  * Get Row ID from Primary Keys
- * @todo Handle error cases properly
  *
  * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
  * This function constructs and executes a SQL query to find the row ID of a record
@@ -230,7 +221,6 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records);
 
 /**
  * Get Row ID from Primary Keys
- * @todo Handle error cases properly
  *
  * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
  *
@@ -248,7 +238,6 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
 
 /**
  * Insert Record into Table
- * @todo Handle error cases properly
  *
  * @brief Inserts a new record into the specified table with the given row ID.
  *
@@ -261,5 +250,35 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
 status_t insert_record_into_table(struct tokens* toks);
+
+/**
+ * Create Empty Table
+ *
+ * @brief Creates a new empty table in the database with the specified name. The new table will
+ * have a single column named `rowid` which is an INTEGER PRIMARY KEY that auto-increments with each
+ * new record inserted.
+ *
+ * This function constructs and executes a SQL query to create the new table if it does not already
+ * exist in the database.
+ *
+ * @param[in] table Name of the table to create
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t create_empty_table(const char* table);
+
+/**
+ * Delete Schema Column
+ *
+ * @brief Deletes a specific column from a table in the database.
+ *
+ * This function constructs and executes a SQL query to remove the specified column
+ * from the given table. It also updates the database schema accordingly.
+ *
+ * @param[in] toks Pointer to tokens structure containing table and column information
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t delete_schema_column(struct tokens* toks);
 
 #endif // DB_HANDLER_H
