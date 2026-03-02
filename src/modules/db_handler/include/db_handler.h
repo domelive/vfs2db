@@ -281,4 +281,55 @@ status_t create_empty_table(const char* table);
  */
 status_t delete_schema_column(struct tokens* toks);
 
+/**
+ * Add Primary Key to Table
+ *
+ * @brief Adds a new primary key column to a specified table in the database.
+ *
+ * This function constructs and executes a SQL query to add a new primary key column
+ * with the given name and type to the specified table. It also updates the database
+ * schema to reflect the addition of the new primary key.
+ *
+ * @param[in] table Name of the table to modify
+ * @param[in] pk_name Name of the primary key column to add
+ * @param[in] pk_type SQLite data type of the primary key column (e.g., INTEGER, TEXT)
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t add_pk_to_table(const char* table, const char* pk_name, const char* pk_type);
+
+/**
+ * Add Attribute to Table
+ *
+ * @brief Adds a new attribute column to a specified table in the database.
+ *
+ * This function constructs and executes a SQL query to add a new attribute column
+ * with the given name and type to the specified table. It also updates the database
+ * schema to reflect the addition of the new attribute.
+ *
+ * @param[in] table Name of the table to modify
+ * @param[in] attr_name Name of the attribute column to add
+ * @param[in] attr_type SQLite data type of the attribute column (e.g., INTEGER, TEXT)
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t add_attribute_to_table(const char* table, const char* attr_name, const char* attr_type);
+
+/**
+ * Add Foreign Key to Table
+ *
+ * @brief Adds a new foreign key column to a specified table in the database.
+ * This function constructs and executes a SQL query to add a new foreign key column
+ * with the given name and type to the specified table, referencing another table and column.
+ * It also updates the database schema to reflect the addition of the new foreign key.
+ *
+ * @param[in] table Name of the table to modify
+ * @param[in] fk_from Name of the foreign key column to add
+ * @param[in] fk_table Name of the referenced table
+ * @param[in] fk_to Name of the referenced column in the referenced table
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_table,
+                         const char* fk_to);
+
 #endif // DB_HANDLER_H

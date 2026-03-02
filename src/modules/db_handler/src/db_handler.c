@@ -141,32 +141,6 @@ cleanup:
     return status;
 }
 
-static inline status_t tokenize_dot_schema_column(const char* column_name, DotSchemaTokens** toks) {
-    status_t status = STATUS_OK;
-
-    // Allocate a new DotSchemaTokens structure to store the parsed components of the .schema column
-    // name, which follows the format: name.TYPE.ATTR.vfs2db
-    TRY_NOT_NULL(*toks = arena_calloc(arena, 1, sizeof(DotSchemaTokens)), cleanup,
-                 STATUS_ALLOC_ERROR, "Failed to allocate DotSchemaTokens for column '%s'",
-                 column_name);
-
-    // Tokenize the path using '/' as a delimiter
-    // First token is the table name
-    char* t              = strtok(column_name, ".");
-    (*toks)->column_name = t ? arena_strdup(arena, t) : NULL;
-
-    // Second token is the record name
-    t                    = strtok(NULL, ".");
-    (*toks)->column_type = t ? arena_strdup(arena, t) : NULL;
-
-    // Third token is the attribute name (we will remove the .vfs2db extension later if present)
-    t                    = strtok(NULL, ".");
-    (*toks)->column_spec = t ? arena_strdup(arena, t) : NULL;
-
-cleanup:
-    return status;
-}
-
 status_t init_db_schema(DbSchema* db_schema) {
     status_t status = STATUS_OK;
 
@@ -516,19 +490,22 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
-    TRY_NOT_NULL(data = arena_strdup(arena, data), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
-                 toks->record, toks->attribute);
-
     data_size = (size_t)sqlite3_column_bytes(stmt, 0);
 
     LOG_TRACE("Data retrieved of size %ld", data_size);
+
+    TRY_NOT_NULL(*bytes = arena_alloc(arena, data_size + 1), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
+                 toks->record, toks->attribute);
+
+    memcpy(*bytes, data, data_size);
+    (*bytes)[data_size] = '\0';
 
     // Calculate the relative offset within the block for the requested attribute chunk and set the
     // output bytes pointer to the correct position within the retrieved data. This allows for
     // correct retrieval of the attribute data even when the requested offset is not aligned.
     relative_offset = offset - BLOCK_OFFSET(offset);
-    *bytes          = data + relative_offset;
+    *bytes += relative_offset;
 
     if (cache_enabled) {
         LOG_TRACE("Inserting new cache block");
@@ -1169,7 +1146,7 @@ status_t delete_schema_column(struct tokens* toks) {
     sqlite3_stmt* stmt   = NULL;
 
     DotSchemaTokens* ds_toks;
-    TRY(tokenize_dot_schema_column(toks->attribute, &ds_toks), cleanup,
+    TRY(tokenize_dot_schema_column(arena, toks->attribute, &ds_toks), cleanup,
         "Failed to parse dot schema tokens for attribute '%s'", toks->attribute);
 
     // Build the dynamic query statement to delete a column from the specified table using the
@@ -1200,6 +1177,157 @@ status_t delete_schema_column(struct tokens* toks) {
     remove_fk_from_schema(table_schema, ds_toks->column_name);
     LOG_DEBUG("Schema updated to remove attribute '%s' from table '%s'", ds_toks->column_name,
               toks->table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t add_pk_to_table(const char* table, const char* pk_name, const char* pk_type) {
+    ensure_arena_init();
+    LOG_TRACE("Adding primary key %s to table %s", pk_name, table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to add a primary key column to the specified table using
+    // ALTER TABLE new_table ADD id INTEGER PRIMARY KEY
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_PRIMARY_KEY_COLUMN,
+                                                         table, pk_name, pk_type),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for adding PK column '%s' to table '%s'", pk_name,
+                 table);
+
+    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for adding PK column '%s' to table '%s'", pk_name, table);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for adding PK", table);
+
+    Pk* new_pk;
+    TRY_NOT_NULL(new_pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate PK for new PK '%s' in table '%s'", pk_name, table);
+
+    TRY_NOT_NULL(new_pk->name = strdup(pk_name), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new PK '%s' in table '%s'", pk_name, table);
+
+    new_pk->sqlite_type = parse_sqlite_type(pk_type);
+
+    add_pk_to_schema(table_schema, new_pk);
+
+    LOG_DEBUG("PK '%s' added to schema for table '%s'", pk_name, table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t add_attribute_to_table(const char* table, const char* attr_name, const char* attr_type) {
+    ensure_arena_init();
+    LOG_TRACE("Adding attribute %s to table %s", attr_name, table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to add a primary key column to the specified table using
+    // ALTER TABLE new_table ADD name TEXT
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_ATTRIBUTE_COLUMN, table,
+                                                         attr_name, attr_type),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for adding attribute '%s' to table '%s'",
+                 attr_name, table);
+
+    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for adding attribute '%s' to table '%s'", attr_name, table);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for adding PK", table);
+
+    Attr* new_attr;
+    TRY_NOT_NULL(new_attr = malloc(sizeof(Attr)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate attribute for new attribute '%s' in table '%s'", attr_name,
+                 table);
+
+    TRY_NOT_NULL(new_attr->name = strdup(attr_name), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new attribute '%s' in table '%s'", attr_name, table);
+
+    new_attr->sqlite_type = parse_sqlite_type(attr_type);
+
+    add_attribute_to_schema(table_schema, new_attr);
+
+    LOG_DEBUG("Attribute '%s' added to schema for table '%s'", attr_name, table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_table,
+                         const char* fk_to) {
+    ensure_arena_init();
+    LOG_TRACE("Adding FK %s to table %s referencing %s(%s)", fk_from, table, fk_table, fk_to);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to add a primary key column to the specified table using
+    // ALTER TABLE new_table ADD chart_id REFERENCES chart(id)
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_FOREIGN_KEY_COLUMN,
+                                                         table, fk_from, fk_table, fk_to),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for adding FK column '%s' to table '%s'", fk_from,
+                 table);
+
+    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for adding FK column '%s' to table '%s'", fk_from, table);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for adding FK", table);
+
+    Fk* new_fk;
+    TRY_NOT_NULL(new_fk = malloc(sizeof(Fk)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate FK for new FK '%s' in table '%s'", fk_from, table);
+
+    TRY_NOT_NULL(new_fk->from = strdup(fk_from), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new FK '%s' in table '%s'", fk_from, table);
+
+    TRY_NOT_NULL(new_fk->table = strdup(fk_table), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new FK '%s' in table '%s'", fk_table, table);
+
+    TRY_NOT_NULL(new_fk->to = strdup(fk_to), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new FK '%s' in table '%s'", fk_to, table);
+
+    Schema* ref_table_schema;
+    TRY_NOT_NULL(ref_table_schema = find_schema_by_name(db_schema, fk_table), cleanup,
+                 STATUS_DB_ERROR,
+                 "Referenced table '%s' not found in schema for adding FK '%s' to table '%s'",
+                 fk_table, fk_from, table);
+
+    Pk* ref_pk;
+    TRY_NOT_NULL(ref_pk = find_pk_by_name(ref_table_schema, fk_to), cleanup, STATUS_DB_ERROR,
+                 "Referenced PK '%s' not found in schema for adding FK '%s' to table '%s'", fk_to,
+                 fk_from, table);
+
+    new_fk->sqlite_type = ref_pk->sqlite_type;
+
+    add_fk_to_schema(table_schema, new_fk);
+
+    LOG_DEBUG("FK '%s' added to schema for table '%s'", fk_from, table);
 
 cleanup:
     if (stmt)

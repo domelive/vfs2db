@@ -136,6 +136,24 @@ static query_t query_store[] = {
                                       "DROP COLUMN "
                                       "%s",
                                       1, NULL},
+
+    [QUERY_TPL_ADD_PRIMARY_KEY_COLUMN] = {"ALTER TABLE "
+                                          "%s "
+                                          "ADD COLUMN "
+                                          "%s %s PRIMARY KEY",
+                                          1, NULL},
+
+    [QUERY_TPL_ADD_ATTRIBUTE_COLUMN] = {"ALTER TABLE "
+                                        "%s "
+                                        "ADD COLUMN "
+                                        "%s %s",
+                                        1, NULL},
+
+    [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"ALTER TABLE "
+                                          "%s "
+                                          "ADD COLUMN "
+                                          "%s %s REFERENCES %s(%s)",
+                                          1, NULL},
 };
 
 status_t qm_init(sqlite3* db) {

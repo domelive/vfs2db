@@ -343,6 +343,46 @@ static inline void remove_fk_from_schema(Schema* schema, const char* fk_from) {
 }
 
 /**
+ * tokenize_dot_schema_column
+ *
+ * @brief Tokenize .schema Column Name into Components
+ *
+ * @param[in] arena       Pointer to the Arena structure for memory allocation
+ * @param[in] column_name The name of the .schema column to tokenize, following the format:
+ * name.TYPE.ATTR.vfs2db
+ * @param[out] toks       Pointer to a DotSchemaTokens structure where the parsed components will be
+ * stored
+ *
+ * @return status_t indicating success or failure of the tokenization process
+ */
+static inline status_t tokenize_dot_schema_column(Arena* arena, const char* column_name,
+                                                  DotSchemaTokens** toks) {
+    status_t status = STATUS_OK;
+
+    // Allocate a new DotSchemaTokens structure to store the parsed components of the .schema column
+    // name, which follows the format: name.TYPE.ATTR.vfs2db
+    TRY_NOT_NULL(*toks = arena_calloc(arena, 1, sizeof(DotSchemaTokens)), cleanup,
+                 STATUS_ALLOC_ERROR, "Failed to allocate DotSchemaTokens for column '%s'",
+                 column_name);
+
+    // Tokenize the path using '/' as a delimiter
+    // First token is the table name
+    char* t              = strtok(column_name, ".");
+    (*toks)->column_name = t ? arena_strdup(arena, t) : NULL;
+
+    // Second token is the record name
+    t                    = strtok(NULL, ".");
+    (*toks)->column_type = t ? arena_strdup(arena, t) : NULL;
+
+    // Third token is the attribute name (we will remove the .vfs2db extension later if present)
+    t                    = strtok(NULL, ".");
+    (*toks)->column_spec = t ? arena_strdup(arena, t) : NULL;
+
+cleanup:
+    return status;
+}
+
+/**
  * count_attributes
  *
  * @brief Count the number of attributes in a Schema

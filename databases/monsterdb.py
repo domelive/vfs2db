@@ -159,7 +159,7 @@ def create_complex_db():
         # 8. POPOLAMENTO BLOB (Heavy I/O)
         # ---------------------------------------------------------
         print(f"Creazione payload BLOB di {BLOB_SIZE / 1024 / 1024:.2f} MB...")
-        heavy_blob =  bytes([0x00] * BLOB_SIZE) # Genera byte
+        heavy_blob =  bytes('F' * BLOB_SIZE, "utf-8") # Genera byte
         long_text = 'A' * (BLOB_SIZE // 2) # Genera testo enorme
         
         c.execute("INSERT INTO large_assets (user_id, asset_name, payload, meta_text) VALUES (?, ?, ?, ?)", 
