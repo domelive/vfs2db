@@ -477,7 +477,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
             LOG_DEBUG("Cache hit for '%s' at offset %ld", key->query, key->offset);
 
             // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
-            // `*bytes` we strdup because of possible threads evicting the block...
+            // `*bytes`... we strdup because of possible threads evicting the block...
             *bytes = arena_strdup(arena, (char*)blk->data);
 
             return status;
@@ -516,7 +516,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
-    TRY_NOT_NULL(data = strdup(data), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(data = arena_strdup(arena, data), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
@@ -540,7 +540,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
         // Populate the CacheBlock with the cache key, retrieved data, and actual size of the data.
         blk->key         = *key;
-        blk->data        = data;
+        blk->data        = strdup(data);
         blk->actual_size = data_size;
 
         // Add the CacheBlock to the cache to store the retrieved attribute chunk for future access.

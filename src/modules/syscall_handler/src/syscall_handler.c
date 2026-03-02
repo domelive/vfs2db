@@ -135,12 +135,9 @@ static inline status_t check_symlink(struct tokens* toks, bool* is_symlink) {
     }
 
     // Check if table exists in schema
-    Schema* table = find_schema_by_name(db_schema, toks->table);
-    if (!table) {
-        LOG_WARN("Table not found in schema: %s", toks->table);
-        *is_symlink = false;
-        goto cleanup;
-    }
+    Schema* table;
+    TRY_NOT_NULL(table = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for symlink check", toks->table);
 
     // Check if attribute is a foreign key in the table schema
     if (find_fk_by_name(table, toks->attribute)) {
