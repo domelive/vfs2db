@@ -271,12 +271,42 @@ static inline bool check_dotschema(const char* path) {
                   toks->record ? toks->record : "(null)",
                   toks->attribute ? toks->attribute : "(null)");
 
-        if (toks->record && strstr(toks->record, ".schema") != NULL) {
+        if (toks->record && !strcmp(toks->record, ".schema") != NULL) {
             LOG_TRACE("Path '%s' is a .schema directory", path);
             return true;
         }
     }
 
+    return false;
+}
+
+static inline bool check_column_exists_in_dotschema(const char* path) {
+    LOG_TRACE("Checking if path corresponds to a column in a .schema directory: %s", path);
+    struct tokens* toks = tokenize_path(path);
+    if (!toks) {
+        LOG_ERROR("Failed to tokenize path for .schema column check: %s", path);
+        return false;
+    }
+
+    if (toks->table) {
+        Schema* table = find_schema_by_name(db_schema, toks->table);
+        if (!table) {
+            LOG_WARN("Table not found in schema: %s", toks->table);
+            return false;
+        }
+
+        // toks->attribute is in the form "name.TYPE.SPEC.vfs2db", we need to extract the name and
+        // spec to check if the column exists in the schema
+        char* t = strtok(arena_strdup(arena, toks->attribute), ".");
+
+        if (find_pk_by_name(table, t) || find_attribute_by_name(table, t) ||
+            find_fk_by_name(table, t)) {
+            LOG_TRACE("Path '%s' corresponds to a column in a .schema directory", path);
+            return true;
+        }
+    }
+
+    LOG_TRACE("Path '%s' does not correspond to a column in a .schema directory", path);
     return false;
 }
 
@@ -439,7 +469,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
     // If path ends with .vfs2db, it's a file (either regular or symlink)
     else {
         // We should check if the file is in a .schema directory
-        if (check_dotschema(path)) {
+        if (check_dotschema(path) && check_column_exists_in_dotschema(path)) {
             LOG_TRACE("getattr: %s is a file in a .schema directory", path);
             st->st_mode  = S_IFREG | 0644;
             st->st_nlink = 1;
@@ -449,52 +479,54 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             st->st_size = 0; // We will generate content dynamically, so we can set size to 0
             LOG_TRACE("getattr: %s is a file in a .schema directory", path);
             goto cleanup;
-        }
-
-        // Remove extension and tokenize path to get table, record, and attribute for schema lookup
-        char* noext_path;
-        TRY_NOT_NULL(noext_path = remove_extension(path), cleanup, STATUS_ALLOC_ERROR,
-                     "Failed to remove extension from path: %s", path);
-
-        // Tokenize path to get table, record, and attribute components for schema lookup
-        struct tokens* toks;
-        TRY_NOT_NULL(toks = tokenize_path(noext_path), cleanup, STATUS_ALLOC_ERROR,
-                     "Failed to tokenize path: %s", path);
-
-        if (!path_exists(toks)) {
-            LOG_WARN("Path does not exist: %s", path);
-            LOG_FUSE_EXIT("getattr", -ENOENT);
-            return -ENOENT;
-        }
-
-        // We will treat foreign keys as symlinks and attributes as regular files.
-        bool is_symlink;
-        TRY(check_symlink(toks, &is_symlink), cleanup,
-            "Failed to check if attribute is a symlink for %s", path);
-
-        if (is_symlink) {
-            st->st_mode  = S_IFLNK | 0644;
-            st->st_nlink = 1;
-            st->st_uid   = getuid();
-            st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time(NULL);
-            LOG_TRACE("getattr: %s is a symlink (FK)", path);
         } else {
-            st->st_mode  = S_IFREG | 0644;
-            st->st_nlink = 1;
-            st->st_uid   = getuid();
-            st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time(NULL);
-            LOG_TRACE("getattr: %s is a regular file", path);
+
+            // Remove extension and tokenize path to get table, record, and attribute for schema
+            // lookup
+            char* noext_path;
+            TRY_NOT_NULL(noext_path = remove_extension(path), cleanup, STATUS_ALLOC_ERROR,
+                         "Failed to remove extension from path: %s", path);
+
+            // Tokenize path to get table, record, and attribute components for schema lookup
+            struct tokens* toks;
+            TRY_NOT_NULL(toks = tokenize_path(noext_path), cleanup, STATUS_ALLOC_ERROR,
+                         "Failed to tokenize path: %s", path);
+
+            if (!path_exists(toks)) {
+                LOG_WARN("Path does not exist: %s", path);
+                LOG_FUSE_EXIT("getattr", -ENOENT);
+                return -ENOENT;
+            }
+
+            // We will treat foreign keys as symlinks and attributes as regular files.
+            bool is_symlink;
+            TRY(check_symlink(toks, &is_symlink), cleanup,
+                "Failed to check if attribute is a symlink for %s", path);
+
+            if (is_symlink) {
+                st->st_mode  = S_IFLNK | 0644;
+                st->st_nlink = 1;
+                st->st_uid   = getuid();
+                st->st_gid   = getgid();
+                st->st_atime = st->st_mtime = time(NULL);
+                LOG_TRACE("getattr: %s is a symlink (FK)", path);
+            } else {
+                st->st_mode  = S_IFREG | 0644;
+                st->st_nlink = 1;
+                st->st_uid   = getuid();
+                st->st_gid   = getgid();
+                st->st_atime = st->st_mtime = time(NULL);
+                LOG_TRACE("getattr: %s is a regular file", path);
+            }
+
+            size_t attr_size;
+            TRY(get_attribute_size(toks, &attr_size), cleanup,
+                "Failed to get attribute size for %s", path);
+
+            st->st_size = attr_size;
+
+            LOG_TRACE("getattr: size=%zu", attr_size);
         }
-
-        size_t attr_size;
-        TRY(get_attribute_size(toks, &attr_size), cleanup, "Failed to get attribute size for %s",
-            path);
-
-        st->st_size = attr_size;
-
-        LOG_TRACE("getattr: size=%zu", attr_size);
     }
 
 cleanup:
@@ -808,8 +840,11 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
 
         // Parsing
         DotSchemaTokens* ds_toks;
-        TRY(tokenize_dot_schema_column(arena, noext_path, &ds_toks), cleanup,
+        TRY(tokenize_dot_schema_column(arena, toks->attribute, &ds_toks), cleanup,
             "Failed to parse .schema tokens from path: %s", path);
+
+        LOG_TRACE("Parsed .schema tokens: column_name='%s', column_type='%s', column_spec='%s'",
+                  ds_toks->column_name, ds_toks->column_type, ds_toks->column_spec);
 
         // Case PK
         if (strncmp(ds_toks->column_spec, "PK", 2) == 0) {
@@ -826,7 +861,7 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
         // Case FK
         else if (strncmp(ds_toks->column_spec, "FK", 2) == 0) {
             // Parse the referenced table and column from the column name
-            char* fk_table = strtok(ds_toks->column_type, "(");
+            char* fk_table = strtok(arena_strdup(arena, ds_toks->column_type), "(");
             char* fk_to    = strtok(NULL, ")");
 
             LOG_TRACE("Adding FK column '%s' referencing '%s(%s)' to table '%s'",
@@ -854,18 +889,11 @@ cleanup:
 }
 
 int vfs2db_open(const char* path, struct fuse_file_info* fi) {
-    ensure_arena_init();
-
     LOG_FUSE_ENTER("open", path);
 
-    status_t status = STATUS_OK;
+    ensure_arena_init();
 
-    // Check if path corresponds to a .schema file, which we will treat as a regular
-    // file with dynamic content generated on read.
-    if (check_dotschema(path)) {
-        LOG_TRACE("Opening .schema file: %s", path);
-        return 0;
-    }
+    status_t status = STATUS_OK;
 
     // Remove extension and tokenize path to get table, record, and attribute for schema
     // lookup.
@@ -890,6 +918,14 @@ int vfs2db_open(const char* path, struct fuse_file_info* fi) {
     }
 
     int flags = fi->flags;
+    LOG_TRACE("open: flags=0x%x", flags);
+    // We need to know ALL flags that are ON:
+    // Pls do it
+    LOG_TRACE("open: O_RDONLY=%d, O_WRONLY=%d, O_RDWR=%d, O_CREAT=%d, O_EXCL=%d, O_NOCTTY=%d, "
+              "O_TRUNC=%d, O_APPEND=%d, O_NONBLOCK=%d, O_DSYNC=%d, O_SYNC=%d, O_RSYNC=%d",
+              !!(flags & O_RDONLY), !!(flags & O_WRONLY), !!(flags & O_RDWR), !!(flags & O_CREAT),
+              !!(flags & O_EXCL), !!(flags & O_NOCTTY), !!(flags & O_TRUNC), !!(flags & O_APPEND),
+              !!(flags & O_NONBLOCK), !!(flags & O_DSYNC), !!(flags & O_SYNC), !!(flags & O_RSYNC));
 
     // If file doesn't exist and O_CREAT isn't specified, error
     // /metrics/123/attribute.vfs2db
@@ -898,15 +934,19 @@ int vfs2db_open(const char* path, struct fuse_file_info* fi) {
     // attribute in the database). However, since we haven't implemented file creation
     // yet, we will return an error for now.
     if (flags & O_CREAT) {
+        LOG_TRACE("open: O_CREAT specified for '%s', but file creation is not implemented yet",
+                  path);
         return vfs2db_create(path, 0644, fi);
     }
 
     // If O_TRUNC is specified, we should truncate the file (i.e., set the attribute
     // value to NULL in the database).
     if (flags & O_TRUNC) {
+        LOG_TRACE("open: O_TRUNC specified for '%s', truncating attribute value to NULL", path);
         return vfs2db_truncate(path, 0, NULL);
     }
 
+    LOG_FUSE_EXIT("open", 0);
     return 0;
 }
 

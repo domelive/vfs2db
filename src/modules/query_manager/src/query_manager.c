@@ -152,7 +152,7 @@ static query_t query_store[] = {
     [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"ALTER TABLE "
                                           "%s "
                                           "ADD COLUMN "
-                                          "%s %s REFERENCES %s(%s)",
+                                          "%s REFERENCES %s(%s)",
                                           1, NULL},
 };
 
