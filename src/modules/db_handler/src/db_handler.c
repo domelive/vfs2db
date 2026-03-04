@@ -372,17 +372,22 @@ static inline status_t get_attribute_all_bytes(struct tokens* toks, char** bytes
                toks->table, toks->record, toks->attribute);
 
     // Retrieve the attribute data from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_ISNULL,
+    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_blob(stmt, 0), cleanup, STATUS_ISNULL,
                  "Failed to retrieve attribute data for '%s/%s/%s'", toks->table, toks->record,
                  toks->attribute);
 
     // Arena_strdup the bytes to ensure they are stored in the thread-local arena for efficient
     // memory management.
-    TRY_NOT_NULL(*bytes = arena_strdup(arena, *bytes), cleanup, STATUS_ALLOC_ERROR,
+    char* blob_data;
+    *size = (size_t)sqlite3_column_bytes(stmt, 0);
+
+    TRY_NOT_NULL(blob_data = arena_alloc(arena, *size), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to duplicate attribute data for '%s/%s/%s'", toks->table, toks->record,
                  toks->attribute);
 
-    *size = (size_t)sqlite3_column_bytes(stmt, 0);
+    memcpy(blob_data, *bytes, *size);
+    *bytes = blob_data;
+
     LOG_TRACE("Data retrieved of size %ld", *size);
 
 cleanup:
@@ -452,7 +457,13 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
             // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
             // `*bytes`... we strdup because of possible threads evicting the block...
-            *bytes = arena_strdup(arena, (char*)blk->data);
+            *bytes = arena_alloc(arena, blk->actual_size + 1);
+            if (!*bytes) {
+                LOG_ERROR("Failed to allocate memory for cached attribute chunk");
+                return STATUS_ALLOC_ERROR;
+            }
+            memcpy(*bytes, blk->data, blk->actual_size);
+            (*bytes)[blk->actual_size] = '\0';
 
             return status;
         }
@@ -486,7 +497,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     LOG_TRACE("Dynamic query executed");
 
     // Retrieve the attribute chunk data from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(data = (char*)sqlite3_column_text(stmt, 0), cleanup, STATUS_DB_ERROR,
+    TRY_NOT_NULL(data = (char*)sqlite3_column_blob(stmt, 0), cleanup, STATUS_DB_ERROR,
                  "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
@@ -516,9 +527,15 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                      toks->attribute);
 
         // Populate the CacheBlock with the cache key, retrieved data, and actual size of the data.
-        blk->key         = *key;
-        blk->data        = strdup(data);
-        blk->actual_size = data_size;
+        blk->key  = *key;
+        blk->data = malloc(data_size);
+        if (!blk->data) {
+            LOG_ERROR("Failed to allocate memory for cache block data");
+            return STATUS_ALLOC_ERROR;
+        }
+        memcpy(blk->data, data, data_size);
+        ((char**)blk->data)[data_size] = '\0';
+        blk->actual_size               = data_size;
 
         // Add the CacheBlock to the cache to store the retrieved attribute chunk for future access.
         cache_add_block(blk);
@@ -889,32 +906,6 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt;
-    CacheKey*     key = NULL;
-
-    if (cache_enabled) {
-        struct tokens toks = {.table = table, .attribute = "", .record = ""};
-
-        // VERY BIG ASSUMPTION ON BLOCK_OFFSET=0
-        TRY(get_cache_key_from_toks(&toks, 0, &key), cleanup,
-            "Failed to get cache key from tokens for rowids of table '%s'", table);
-
-        // Cache HIT
-        CacheBlock* blk;
-        if ((blk = cache_get(key)) != NULL) {
-            LOG_DEBUG("Cache hit for table rowids: %s", table);
-            *n_records = blk->actual_size;
-
-            char** cached_records = (char**)blk->data;
-            for (int i = 0; i < *n_records; i++) {
-                records[i] = cached_records[i];
-            }
-
-            return STATUS_OK;
-        }
-
-        // Cache MISS
-        LOG_DEBUG("Cache miss for table rowids: %s", table);
-    }
 
     // Build the dynamic query statement to select all row IDs from the specified table using the
     // QUERY_TPL_SELECT_TABLE_ROWIDS template.
@@ -939,38 +930,6 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
 
     *n_records = record_count;
     LOG_DEBUG("Found %d rows in table '%s'", record_count, table);
-
-    if (cache_enabled) {
-        CacheBlock* blk;
-
-        // Create a new CacheBlock to store the retrieved row IDs for caching purposes.
-        TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
-                     "Failed to allocate CacheBlock for rowids of table '%s'", table);
-
-        char** records_copy;
-
-        // Create a copy of the retrieved row IDs to store in the cache, ensuring that the cached
-        // data is separate from the original data used for the current operation.
-        TRY_NOT_NULL(records_copy = malloc(record_count * sizeof(char*)), cleanup,
-                     STATUS_ALLOC_ERROR, "Failed to allocate records copy for cache of table '%s'",
-                     table);
-
-        // Duplicate each retrieved row ID string for storage in the cache to ensure that the cached
-        // data remains valid even if the original data is modified or freed after the current
-        // operation.
-        for (int i = 0; i < record_count; i++) {
-            TRY_NOT_NULL(records_copy[i] = strdup(records[i]), cleanup, STATUS_ALLOC_ERROR,
-                         "Failed to duplicate record '%s' for cache of table '%s'", records[i],
-                         table);
-        }
-
-        blk->key         = *key;
-        blk->data        = records_copy;
-        blk->actual_size = record_count;
-
-        cache_add_block(blk);
-        cache_view();
-    }
 
 cleanup:
     if (stmt)
