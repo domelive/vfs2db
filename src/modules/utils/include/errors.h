@@ -38,6 +38,7 @@
  */
 typedef enum status_t {
     STATUS_OK,
+    STATUS_ISNULL,
 
     STATUS_ALLOC_ERROR,
 

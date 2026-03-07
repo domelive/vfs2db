@@ -92,6 +92,37 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
 int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size);
 
 /**
+ * VFS2DB Setxattr
+ *
+ * @brief Sets the value of an extended attribute for a file in the VFS2DB filesystem.
+ *
+ * @param[in]  path    The file path
+ * @param[in]  name    The name of the extended attribute
+ * @param[in]  value   Buffer containing the attribute value to set
+ * @param[in]  size    Size of the attribute value
+ * @param[in]  flags   Flags for setting the attribute (not used in this case)
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_setxattr(const char* path, const char* name, const char* value, size_t size, int flags);
+
+/**
+ * VFS2DB Utimens
+ *
+ * @brief Updates the access and modification times of a file in the VFS2DB filesystem. This
+ * function is currently a placeholder and does not perform any actual time updates, as file
+ * timestamps are not modifiable in this implementation.
+ *
+ * @param[in] path    The file path
+ * @param[in] tv      Array of two timespec structures containing the new access and modification
+ *                    times (not used in this case)
+ * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_utimens(const char* path, const struct timespec tv[2], struct fuse_file_info* fi);
+
+/**
  * VFS2DB Readdir
  *
  * @brief Reads the contents of a directory in the VFS2DB filesystem, listing tables, records, or
@@ -108,6 +139,34 @@ int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size
  */
 int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset,
                    struct fuse_file_info* fi, enum fuse_readdir_flags flags);
+
+/**
+ * VFS2DB Mkdir
+ *
+ * @brief Creates a new directory in the VFS2DB filesystem, which corresponds to creating a new
+ * table in the database or a new recozrd.
+ *
+ * @param[in] path    The directory path to create
+ * @param[in] mode    The directory mode (not used in this case)
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_mkdir(const char* path, mode_t mode);
+
+/**
+ * VFS2DB Create
+ *
+ * @brief Creates a new file in the VFS2DB filesystem, which corresponds to creating a new record in
+ * the database. This function is currently a placeholder and not implemented yet, as record
+ * creation logic is not implemented in the database handler yet.
+ *
+ * @param[in] path    The file path corresponding to the new record
+ * @param[in] mode    The file mode (not used in this case)
+ * @param[in] fi      Pointer to fuse_file_info structure (not used in this case
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi);
 
 /**
  * VFS2DB Open
@@ -140,6 +199,18 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
                 struct fuse_file_info* fi);
 
 /**
+ * VFS2DB Unlink
+ *
+ * @brief Deletes a file in the VFS2DB filesystem, which corresponds to deleting an attribute or
+ * record from the database. This function is currently a placeholder and not implemented yet.
+ *
+ * @param[in] path    The file path to delete
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_unlink(const char* path);
+
+/**
  * VFS2DB Write
  *
  * @brief Writes data to a file in the VFS2DB filesystem, updating the value of an attribute.
@@ -168,20 +239,6 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
  * @return 0 on success, negative error code on failure
  */
 int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi);
-
-/**
- * VFS2DB Create
- *
- * @brief Creates a new record in the VFS2DB filesystem. This is currently a placeholder and not
- * implemented yet.
- *
- * @param[in] path    The file path corresponding to the new record
- * @param[in] mode    The file mode (not used in this case)
- * @param[in] fi      Pointer to fuse_file_info structure (not used in this case)
- *
- * @return 0 on success, negative error code on failure
- */
-int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi);
 
 /**
  * VFS2DB Readlink

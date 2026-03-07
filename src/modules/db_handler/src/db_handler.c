@@ -115,20 +115,29 @@ static inline status_t get_cache_key_from_toks(struct tokens* toks, off_t block_
     // Construct the file path for the cache key based on the table, record, and attribute
     // information from the tokens.
     char path[MAX_SIZE];
-    snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    if (toks->table && toks->record && toks->attribute) {
+        snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
+    } else if (toks->table && toks->record) {
+        snprintf(path, MAX_SIZE, "/%s//", toks->table, toks->record);
+    } else {
+        LOG_ERROR("Invalid tokens for cache key: table='%s', record='%s', attribute='%s'",
+                  toks->table, toks->record, toks->attribute);
+        return STATUS_DB_ERROR;
+    }
 
     LOG_TRACE("Getting attribute bytes: path='%s', block_offset=%ld", path, block_offset);
 
     // Allocate a new CacheKey structure to store the cache key information for the specified path
     // and block offset. The CacheKey will be used to identify the corresponding block of data in
     // the cache for read and write operations on the attribute file in the VFS2DB filesystem.
-    TRY_NOT_NULL(*key = calloc(1, sizeof(CacheKey)), key_alloc_error, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(*key = calloc(1, sizeof(CacheKey)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate CacheKey for path '%s'", path);
 
     strncpy((*key)->query, path, strlen(path) + 1);
     (*key)->offset = block_offset;
 
-key_alloc_error:
+cleanup:
     return status;
 }
 
@@ -337,6 +346,56 @@ cleanup:
     return status;
 }
 
+static inline status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
+    ensure_arena_init();
+
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt;
+
+    // Build the statement
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+                                                         toks->attribute, toks->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for getting all attribute bytes: '%s/%s/%s'",
+                 toks->table, toks->record, toks->attribute);
+
+    // Bind the record value to the query
+    TRY_SQLITE(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+               "Failed to bind record value for getting all attribute bytes: '%s/%s/%s'",
+               toks->table, toks->record, toks->attribute);
+
+    // Execute the query and check if a row is returned
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
+               "Failed to execute query for getting all attribute bytes for '%s/%s/%s'",
+               toks->table, toks->record, toks->attribute);
+
+    // Retrieve the attribute data from the query result and calculate its size in bytes.
+    TRY_NOT_NULL(*bytes = (char*)sqlite3_column_blob(stmt, 0), cleanup, STATUS_ISNULL,
+                 "Failed to retrieve attribute data for '%s/%s/%s'", toks->table, toks->record,
+                 toks->attribute);
+
+    // Arena_strdup the bytes to ensure they are stored in the thread-local arena for efficient
+    // memory management.
+    char* blob_data;
+    *size = (size_t)sqlite3_column_bytes(stmt, 0);
+
+    TRY_NOT_NULL(blob_data = arena_alloc(arena, *size), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate attribute data for '%s/%s/%s'", toks->table, toks->record,
+                 toks->attribute);
+
+    memcpy(blob_data, *bytes, *size);
+    *bytes = blob_data;
+
+    LOG_TRACE("Data retrieved of size %ld", *size);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
 status_t get_attribute_size(struct tokens* toks, size_t* size) {
     ensure_arena_init();
 
@@ -346,7 +405,7 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
     sqlite3_stmt* stmt;
 
     // Build the statement
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE_SIZE,
                                                          toks->attribute, toks->table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for attribute size: '%s/%s/%s'", toks->table,
@@ -363,7 +422,7 @@ status_t get_attribute_size(struct tokens* toks, size_t* size) {
                toks->attribute);
 
     // Calculate the bytes of the attribute
-    *size = sqlite3_column_bytes(stmt, 0);
+    *size = sqlite3_column_int(stmt, 0);
 
 cleanup:
     if (stmt)
@@ -386,6 +445,8 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     size_t        relative_offset = 0;
 
     if (cache_enabled) {
+        LOG_TRACE("Cache enabled, checking for cache hit...");
+        cache_view();
         // Attempt to construct a cache key for the specified attribute and block offset to check
         // for a cache hit before querying the database.
         TRY(get_cache_key_from_toks(toks, BLOCK_OFFSET(offset), &key), cleanup,
@@ -395,7 +456,18 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
         // Cache HIT
         if ((blk = cache_get(key)) != NULL) {
             LOG_DEBUG("Cache hit for '%s' at offset %ld", key->query, key->offset);
-            *bytes = (char*)blk->data;
+
+            // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
+            // `*bytes`... we strdup because of possible threads evicting the block...
+            *bytes = arena_calloc(arena, 1, blk->actual_size);
+            if (!*bytes) {
+                LOG_ERROR("Failed to allocate memory for cached attribute chunk");
+                return STATUS_ALLOC_ERROR;
+            }
+            memcpy(*bytes, blk->data, blk->actual_size);
+            relative_offset = offset - BLOCK_OFFSET(offset);
+            *bytes += relative_offset;
+
             return status;
         }
 
@@ -411,68 +483,93 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  "Failed to build query statement for attribute chunk bytes: '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
 
+    LOG_TRACE("Dynamic query built");
+
     // Bind the record value to the query
     TRY_SQLITE(sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
                "Failed to bind record value for chunk query: '%s/%s/%s'", toks->table, toks->record,
                toks->attribute);
+
+    LOG_TRACE("Dynamic query binded");
 
     // Execute the query and check if a row is returned
     TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
                "Failed to execute chunk query for '%s/%s/%s'", toks->table, toks->record,
                toks->attribute);
 
+    LOG_TRACE("Dynamic query executed");
+
     // Retrieve the attribute chunk data from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(data = strdup((char*)sqlite3_column_text(stmt, 0)), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(data = (char*)sqlite3_column_blob(stmt, 0), cleanup, STATUS_DB_ERROR,
                  "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
     data_size = (size_t)sqlite3_column_bytes(stmt, 0);
 
+    LOG_TRACE("Data retrieved of size %ld", data_size);
+
+    TRY_NOT_NULL(*bytes = arena_calloc(arena, 1, data_size), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
+                 toks->record, toks->attribute);
+
+    memcpy(*bytes, data, data_size);
+
     // Calculate the relative offset within the block for the requested attribute chunk and set the
     // output bytes pointer to the correct position within the retrieved data. This allows for
     // correct retrieval of the attribute data even when the requested offset is not aligned.
     relative_offset = offset - BLOCK_OFFSET(offset);
-    *bytes          = data + relative_offset;
+    *bytes += relative_offset;
 
     if (cache_enabled) {
+        LOG_TRACE("Inserting new cache block");
+
         // Create a new CacheBlock for the retrieved attribute chunk data.
-        TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
+        TRY_NOT_NULL(blk = calloc(1, sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
                      "Failed to allocate CacheBlock for '%s/%s/%s'", toks->table, toks->record,
                      toks->attribute);
 
         // Populate the CacheBlock with the cache key, retrieved data, and actual size of the data.
-        blk->key         = *key;
-        blk->data        = data;
+        blk->key  = *key;
+        blk->data = calloc(1, data_size);
+        if (!blk->data) {
+            LOG_ERROR("Failed to allocate memory for cache block data");
+            return STATUS_ALLOC_ERROR;
+        }
+        memcpy(blk->data, data, data_size);
         blk->actual_size = data_size;
 
         // Add the CacheBlock to the cache to store the retrieved attribute chunk for future access.
         cache_add_block(blk);
         LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
 
-        free(key);
+        key = NULL; // Ownership transferred to cache block, avoid double free
+
         cache_view();
     }
 
 cleanup:
+    if (key)
+        free(key);
     if (stmt)
         sqlite3_finalize(stmt);
+
     return status;
 }
 
-status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
+status_t is_attribute_null(struct tokens* toks, bool* is_null) {
     ensure_arena_init();
+
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
-    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
-
-    // Build the statement to retrieve the entire attribute value for the specified table, record,
-    // and attribute using the QUERY_TPL_SELECT_ATTRIBUTE template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE,
+    // Build the statement to check if the specified attribute value is NULL for the given record in
+    // the specified table, using the QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL,
                                                          toks->attribute, toks->table),
                  cleanup, STATUS_DB_ERROR,
-                 "Failed to build query statement for getting all attribute bytes: '%s/%s/%s'",
+                 "Failed to build query statement for checking if attribute is NULL: '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
 
     // Bind the record value to the query to specify which record's attribute value to retrieve.
@@ -483,15 +580,10 @@ status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size
     // Execute the query and check if a row is returned, indicating that the attribute value was
     // successfully retrieved.
     TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
-               "Failed to execute query for getting all attribute bytes for '%s/%s/%s'",
+               "Failed to execute query for checking if attribute is NULL for '%s/%s/%s'",
                toks->table, toks->record, toks->attribute);
 
-    // Retrieve the entire attribute value from the query result and calculate its size in bytes.
-    TRY_NOT_NULL(*bytes = arena_strdup(arena, (char*)sqlite3_column_text(stmt, 0)), cleanup,
-                 STATUS_ALLOC_ERROR, "Failed to retrieve attribute bytes for '%s/%s/%s'",
-                 toks->table, toks->record, toks->attribute);
-
-    *size = (size_t)sqlite3_column_bytes(stmt, 0);
+    *is_null = sqlite3_column_int(stmt, 0);
 
 cleanup:
     if (stmt)
@@ -500,11 +592,10 @@ cleanup:
 }
 
 status_t get_attribute_type(struct tokens* toks, int* type) {
-    status_t status = STATUS_OK;
-
     LOG_TRACE("Getting attribute type: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
-    Schema* table_schema = NULL;
+    status_t status       = STATUS_OK;
+    Schema*  table_schema = NULL;
 
     // Find the schema for the specified table in the database schema.
     TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, toks->table), cleanup,
@@ -591,23 +682,23 @@ static inline status_t bind_attribute_value(sqlite3_stmt* stmt, char* value, int
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size,
                                 off_t offset) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
+    LOG_TRACE("Updating attribute value: %s/%s/%s (size=%zu, offset=%ld)", toks->table,
+              toks->record, toks->attribute, size, offset);
+
+    status_t      status      = STATUS_OK;
     sqlite3_stmt* stmt        = NULL;
     sqlite3_blob* blob_handle = NULL;
-
-    LOG_DEBUG("Updating attribute: %s/%s/%s (size=%zu)", toks->table, toks->record, toks->attribute,
-              size);
+    int           type;
 
     // Determine the SQLite data type of the attribute to decide how to perform the update.
-    int type;
     TRY(get_attribute_type(toks, &type), cleanup,
         "Failed to get attribute type for update of '%s/%s/%s'", toks->table, toks->record,
         toks->attribute);
 
-    // If the attribute is of type TEXT or BLOB, we can use the SQLite Blob I/O API to perform
+    // If the attribute is of type BLOB, we can use the SQLite Blob I/O API to perform
     // in-place updates without needing to read the entire value into memory. This allows for
-    // efficient updates of large TEXT or BLOB attributes by directly writing to the database file
+    // efficient updates of large BLOB attributes by directly writing to the database file
     // at the correct offset.
     if (type == SQLITE_BLOB) {
         // Get current attribute size
@@ -632,7 +723,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
                          "Failed to build query statement for blob expansion of '%s/%s/%s'",
                          toks->table, toks->record, toks->attribute);
 
-            TRY_SQLITE(sqlite3_bind_int(stmt, 1, (int)expand_by), SQLITE_OK, cleanup,
+            TRY_SQLITE(sqlite3_bind_zeroblob(stmt, 1, (int)expand_by), SQLITE_OK, cleanup,
                        "Failed to bind expand size for blob expansion of '%s/%s/%s'", toks->table,
                        toks->record, toks->attribute);
 
@@ -658,17 +749,29 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
         LOG_DEBUG("Blob updated in-place via Blob I/O (offset=%ld, size=%zu)", offset, size);
     }
-    // For other data types (e.g., INTEGER, FLOAT), we need to read the entire attribute value into
-    // memory, apply the update to the in-memory value, and then write the updated value back to the
-    // database. This is necessary because non-BLOB types cannot be updated in-place and
+    // For other data types (e.g., TEXT, INTEGER, FLOAT), we need to read the entire attribute value
+    // into memory, apply the update to the in-memory value, and then write the updated value back
+    // to the database. This is necessary because non-BLOB types cannot be updated in-place and
     // require a full read-modify-write cycle.
     else {
         // Read all the attribute bytes
-        char*  bytes;
-        size_t bytes_size;
-        TRY(get_attribute_all_bytes(toks, &bytes, &bytes_size), cleanup,
-            "Failed to get all attribute bytes for update of '%s/%s/%s'", toks->table, toks->record,
-            toks->attribute);
+        char*    bytes;
+        size_t   bytes_size;
+        status_t read_status = get_attribute_all_bytes(toks, &bytes, &bytes_size);
+
+        // If the attribute value is NULL, we treat it as an empty string for the purpose of the
+        // update. This allows us to apply the update correctly even when the existing value is
+        // NULL.
+        if (read_status == STATUS_ISNULL) {
+            LOG_DEBUG("Attribute value is NULL, treating as empty for update of '%s/%s/%s'",
+                      toks->table, toks->record, toks->attribute);
+            bytes      = arena_strdup(arena, "");
+            bytes_size = 0;
+        } else if (read_status != STATUS_OK) {
+            LOG_ERROR("Failed to read existing attribute value for update of '%s/%s/%s'",
+                      toks->table, toks->record, toks->attribute);
+            goto cleanup;
+        }
 
         // Calculate new size after update
         size_t new_bytes_size = (offset + size > bytes_size) ? offset + size : bytes_size;
@@ -676,7 +779,8 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
         // Allocate new buffer for the updated attribute value
         char* new_bytes;
-        TRY_NOT_NULL(new_bytes = arena_alloc(arena, new_bytes_size), cleanup, STATUS_ALLOC_ERROR,
+        TRY_NOT_NULL(new_bytes = arena_calloc(arena, 1, new_bytes_size + 1), cleanup,
+                     STATUS_ALLOC_ERROR,
                      "Failed to allocate buffer for updated attribute value for '%s/%s/%s'",
                      toks->table, toks->record, toks->attribute);
 
@@ -684,7 +788,7 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         memcpy(new_bytes, bytes, bytes_size);
         memcpy(new_bytes + offset, buffer, size);
 
-        // Write the new a;ttribute bytes
+        // Write the new attribute bytes
         TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE,
                                                              toks->table, toks->attribute),
                      cleanup, STATUS_DB_ERROR,
@@ -734,11 +838,11 @@ cleanup:
 
 status_t set_attribute_empty(struct tokens* toks) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
-    LOG_DEBUG("Setting attribute to empty: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_TRACE("Setting attribute to empty: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
-    sqlite3_stmt* stmt = NULL;
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
 
     // Build the UPDATE statement to set the specified attribute to empty for the given table and
     // record using the QUERY_TPL_UPDATE_ATTRIBUTE template.
@@ -749,9 +853,21 @@ status_t set_attribute_empty(struct tokens* toks) {
                  toks->table, toks->record, toks->attribute);
 
     // NOTE: it should NOT nullify the field, because it can have a 'NOT NULL' constraint
-    TRY_SQLITE(sqlite3_bind_text(stmt, 1, "", -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
-               "Failed to bind empty string for setting attribute to empty for '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+    // Get the attribute type to bind the empty value correctly based on its SQLite type
+    int type;
+    TRY(get_attribute_type(toks, &type), cleanup,
+        "Failed to get attribute type for setting attribute to empty for '%s/%s/%s'", toks->table,
+        toks->record, toks->attribute);
+
+    if (type == SQLITE_BLOB) {
+        TRY_SQLITE(sqlite3_bind_zeroblob(stmt, 1, 0), SQLITE_OK, cleanup,
+                   "Failed to bind empty blob for setting attribute to empty for '%s/%s/%s'",
+                   toks->table, toks->record, toks->attribute);
+    } else {
+        TRY_SQLITE(sqlite3_bind_text(stmt, 1, "", -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+                   "Failed to bind empty string for setting attribute to empty for '%s/%s/%s'",
+                   toks->table, toks->record, toks->attribute);
+    }
 
     // Bind the record ID for the WHERE clause to specify which record's attribute value should be
     // set to empty.
@@ -786,37 +902,11 @@ cleanup:
 
 status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
     LOG_TRACE("Getting row IDs for table: %s", table);
 
+    status_t      status = STATUS_OK;
     sqlite3_stmt* stmt;
-
-    CacheKey* key = NULL;
-    if (cache_enabled) {
-        struct tokens toks = {.table = table, .attribute = "", .record = ""};
-
-        // VERY BIG ASSUMPTION ON BLOCK_OFFSET=0
-        TRY(get_cache_key_from_toks(&toks, 0, &key), cleanup,
-            "Failed to get cache key from tokens for rowids of table '%s'", table);
-
-        // Cache HIT
-        CacheBlock* blk;
-        if ((blk = cache_get(key)) != NULL) {
-            LOG_DEBUG("Cache hit for table rowids: %s", table);
-            *n_records = blk->actual_size;
-
-            char** cached_records = (char**)blk->data;
-            for (int i = 0; i < *n_records; i++) {
-                records[i] = cached_records[i];
-            }
-
-            return STATUS_OK;
-        }
-
-        // Cache MISS
-        LOG_DEBUG("Cache miss for table rowids: %s", table);
-    }
 
     // Build the dynamic query statement to select all row IDs from the specified table using the
     // QUERY_TPL_SELECT_TABLE_ROWIDS template.
@@ -842,56 +932,23 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records) {
     *n_records = record_count;
     LOG_DEBUG("Found %d rows in table '%s'", record_count, table);
 
-    if (cache_enabled) {
-        CacheBlock* blk;
-
-        // Create a new CacheBlock to store the retrieved row IDs for caching purposes.
-        TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
-                     "Failed to allocate CacheBlock for rowids of table '%s'", table);
-
-        char** records_copy;
-
-        // Create a copy of the retrieved row IDs to store in the cache, ensuring that the cached
-        // data is separate from the original data used for the current operation.
-        TRY_NOT_NULL(records_copy = malloc(record_count * sizeof(char*)), cleanup,
-                     STATUS_ALLOC_ERROR, "Failed to allocate records copy for cache of table '%s'",
-                     table);
-
-        // Duplicate each retrieved row ID string for storage in the cache to ensure that the cached
-        // data remains valid even if the original data is modified or freed after the current
-        // operation.
-        for (int i = 0; i < record_count; i++) {
-            TRY_NOT_NULL(records_copy[i] = strdup(records[i]), cleanup, STATUS_ALLOC_ERROR,
-                         "Failed to duplicate record '%s' for cache of table '%s'", records[i],
-                         table);
-        }
-
-        blk->key         = *key;
-        blk->data        = records_copy;
-        blk->actual_size = record_count;
-
-        cache_add_block(blk);
-        cache_view();
-    }
-
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
     return status;
 }
 
+// FIX: this function should be implemented better using the query manager prepared statements
 status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks,
                             int* rowid) {
     ensure_arena_init();
-    status_t status = STATUS_OK;
 
     LOG_TRACE("Getting rowid from PKs for table: %s (num_fks=%d)", table, num_fks);
 
-    // FIX: this function should be implemented better using the query manager prepared statements
+    status_t      status = STATUS_OK;
     sqlite3_stmt* pstmt;
-
-    int  str_len = 0;
-    char query_str[1024];
+    int           str_len = 0;
+    char          query_str[1024];
 
     // Build the SQL query string to select the row ID from the specified table based on the
     // provided primary key values.
@@ -928,5 +985,312 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
 cleanup:
     if (pstmt)
         sqlite3_finalize(pstmt);
+    return status;
+}
+
+status_t insert_record_into_table(struct tokens* toks) {
+    LOG_TRACE("Inserting record into table: %s/%s", toks->table, toks->record);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to insert a new record into the specified table using the
+    // QUERY_TPL_INSERT_RECORD_INTO_TABLE template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_INSERT_RECORD_INTO_TABLE,
+                                                         toks->table, toks->record),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for inserting record into table: '%s/%s'",
+                 toks->table, toks->record);
+
+    // Execute the INSERT statement to add the new record to the database.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for inserting record into table: '%s/%s'", toks->table,
+               toks->record);
+
+    // Check the number of rows affected by the INSERT operation to confirm that the record was
+    // successfully inserted into the database.
+    int changes = sqlite3_changes(db);
+    LOG_DEBUG("Record inserted successfully, %d rows affected", changes);
+
+    // If caching is enabled, evict any corresponding cache blocks that may exist for the newly
+    // inserted record to ensure that subsequent queries for this record will fetch the updated data
+    // from the database rather than stale data from the cache.
+    if (cache_enabled) {
+        // Evict the corresponding cache blocks, if exists
+        CacheKey* key = NULL;
+        TRY(get_cache_key_from_toks(toks, 0, &key), cleanup,
+            "Failed to get cache key from tokens for eviction of '%s/%s'", toks->table,
+            toks->record);
+        LOG_TRACE("Evicting cache blocks for new record insertion: path='%s'", key->query);
+
+        // We cannot evict blocks using toks directly, because we want to evict all blocks related
+        // to the record (all attributes), so we create a new toks with empty attribute for
+        // eviction.
+        // TODO: make a separate function that takes the path. Maybe it is easier like that.
+        struct tokens toks_for_eviction = {
+            .table     = toks->table,
+            .record    = toks->record,
+            .attribute = "", // Evict all attributes for the record
+        };
+
+        cache_evict_blocks_from_toks(&toks_for_eviction);
+
+        free(key);
+    }
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t create_empty_table(const char* table) {
+    LOG_TRACE("Creating empty table: %s", table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to create a new empty table with the specified name using
+    // the QUERY_TPL_CREATE_EMPTY_TABLE template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_CREATE_EMPTY_TABLE, table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for creating empty table '%s'", table);
+
+    // Execute the CREATE TABLE statement to add the new empty table to the database.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for creating empty table '%s'", table);
+
+    LOG_DEBUG("Empty table created successfully: %s", table);
+
+    // After creating the new empty table in the database, we need to update our in-memory schema
+    // representation to include the new table.
+    Schema* new_schema;
+    TRY_NOT_NULL(new_schema = malloc(sizeof(Schema)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate schema for new table '%s'", table);
+
+    // Initialize the new schema for the created table with its name and empty lists for primary
+    // keys, attributes, and foreign keys.
+    TRY_NOT_NULL(new_schema->name = strdup(table), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new schema of table '%s'", table);
+    new_schema->pk_head   = NULL;
+    new_schema->attr_head = NULL;
+    new_schema->fks_head  = NULL;
+
+    // Since every table must have a primary key, we create a default primary key named "rowid" of
+    // type INTEGER for the new table.
+    Pk* new_pk;
+    TRY_NOT_NULL(new_pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate PK for new table '%s'", table);
+    TRY_NOT_NULL(new_pk->name = strdup("rowid"), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate PK name for new table '%s'", table);
+    new_pk->sqlite_type = SQLITE_INTEGER;
+
+    // Add the new primary key to the new schema and then add the new schema to the database schema
+    // to ensure that our in-memory representation of the database schema is consistent with the
+    // actual state of the database after creating the new table.
+    add_pk_to_schema(new_schema, new_pk);
+    add_schema(db_schema, new_schema);
+    LOG_DEBUG("mkdir: schema for table '%s' created with PK 'rowid'", table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t delete_schema_column(struct tokens* toks) {
+    ensure_arena_init();
+    LOG_TRACE("Deleting schema column: %s/%s/%s", toks->table, toks->record, toks->attribute);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    DotSchemaTokens* ds_toks;
+    TRY(tokenize_dot_schema_column(arena, toks->attribute, &ds_toks), cleanup,
+        "Failed to parse dot schema tokens for attribute '%s'", toks->attribute);
+
+    // Build the dynamic query statement to delete a column from the specified table using the
+    // QUERY_TPL_DELETE_SCHEMA_COLUMN template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_DROP_SCHEMA_COLUMN,
+                                                         toks->table, ds_toks->column_name),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for deleting schema column '%s/%s/%s'",
+                 toks->table, toks->record, ds_toks->column_name);
+
+    // Execute the ALTER TABLE statement to delete the specified column from the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for deleting schema column '%s/%s/%s'", toks->table,
+               toks->record, ds_toks->column_name);
+
+    LOG_DEBUG("Schema column deleted successfully: %s/%s/%s", toks->table, toks->record,
+              ds_toks->column_name);
+
+    // After deleting the column from the database table, we need to update our in-memory schema
+    // representation to reflect the change by removing the corresponding attribute from the schema
+    // of the affected table.
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, toks->table), cleanup,
+                 STATUS_DB_ERROR, "Table '%s' not found in schema for deleting column",
+                 toks->table);
+    remove_attribute_from_schema(table_schema, ds_toks->column_name);
+    remove_pk_from_schema(table_schema, ds_toks->column_name);
+    remove_fk_from_schema(table_schema, ds_toks->column_name);
+    LOG_DEBUG("Schema updated to remove attribute '%s' from table '%s'", ds_toks->column_name,
+              toks->table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t add_pk_to_table(const char* table, const char* pk_name, const char* pk_type) {
+    ensure_arena_init();
+    LOG_TRACE("Adding primary key %s to table %s", pk_name, table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to add a primary key column to the specified table using
+    // ALTER TABLE new_table ADD id INTEGER PRIMARY KEY
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_PRIMARY_KEY_COLUMN,
+                                                         table, pk_name, pk_type),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for adding PK column '%s' to table '%s'", pk_name,
+                 table);
+
+    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for adding PK column '%s' to table '%s'", pk_name, table);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for adding PK", table);
+
+    Pk* new_pk;
+    TRY_NOT_NULL(new_pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate PK for new PK '%s' in table '%s'", pk_name, table);
+
+    TRY_NOT_NULL(new_pk->name = strdup(pk_name), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new PK '%s' in table '%s'", pk_name, table);
+
+    new_pk->sqlite_type = parse_sqlite_type(pk_type);
+
+    add_pk_to_schema(table_schema, new_pk);
+
+    LOG_DEBUG("PK '%s' added to schema for table '%s'", pk_name, table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t add_attribute_to_table(const char* table, const char* attr_name, const char* attr_type) {
+    ensure_arena_init();
+    LOG_TRACE("Adding attribute %s to table %s", attr_name, table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to add a primary key column to the specified table using
+    // ALTER TABLE new_table ADD name TEXT
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_ATTRIBUTE_COLUMN, table,
+                                                         attr_name, attr_type),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for adding attribute '%s' to table '%s'",
+                 attr_name, table);
+
+    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for adding attribute '%s' to table '%s'", attr_name, table);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for adding PK", table);
+
+    Attr* new_attr;
+    TRY_NOT_NULL(new_attr = malloc(sizeof(Attr)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate attribute for new attribute '%s' in table '%s'", attr_name,
+                 table);
+
+    TRY_NOT_NULL(new_attr->name = strdup(attr_name), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new attribute '%s' in table '%s'", attr_name, table);
+
+    new_attr->sqlite_type = parse_sqlite_type(attr_type);
+
+    add_attribute_to_schema(table_schema, new_attr);
+
+    LOG_DEBUG("Attribute '%s' added to schema for table '%s'", attr_name, table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_table,
+                         const char* fk_to) {
+    ensure_arena_init();
+    LOG_TRACE("Adding FK %s to table %s referencing %s(%s)", fk_from, table, fk_table, fk_to);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to add a primary key column to the specified table using
+    // ALTER TABLE new_table ADD chart_id REFERENCES chart(id)
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_FOREIGN_KEY_COLUMN,
+                                                         table, fk_from, fk_table, fk_to),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for adding FK column '%s' to table '%s'", fk_from,
+                 table);
+
+    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for adding FK column '%s' to table '%s'", fk_from, table);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
+    Schema* table_schema;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Table '%s' not found in schema for adding FK", table);
+
+    Fk* new_fk;
+    TRY_NOT_NULL(new_fk = malloc(sizeof(Fk)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate FK for new FK '%s' in table '%s'", fk_from, table);
+
+    TRY_NOT_NULL(new_fk->from = strdup(fk_from), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new FK '%s' in table '%s'", fk_from, table);
+
+    TRY_NOT_NULL(new_fk->table = strdup(fk_table), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new FK '%s' in table '%s'", fk_table, table);
+
+    TRY_NOT_NULL(new_fk->to = strdup(fk_to), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate name for new FK '%s' in table '%s'", fk_to, table);
+
+    Schema* ref_table_schema;
+    TRY_NOT_NULL(ref_table_schema = find_schema_by_name(db_schema, fk_table), cleanup,
+                 STATUS_DB_ERROR,
+                 "Referenced table '%s' not found in schema for adding FK '%s' to table '%s'",
+                 fk_table, fk_from, table);
+
+    Pk* ref_pk;
+    TRY_NOT_NULL(ref_pk = find_pk_by_name(ref_table_schema, fk_to), cleanup, STATUS_DB_ERROR,
+                 "Referenced PK '%s' not found in schema for adding FK '%s' to table '%s'", fk_to,
+                 fk_from, table);
+
+    new_fk->sqlite_type = ref_pk->sqlite_type;
+
+    add_fk_to_schema(table_schema, new_fk);
+
+    LOG_DEBUG("FK '%s' added to schema for table '%s'", fk_from, table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
     return status;
 }

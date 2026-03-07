@@ -287,6 +287,102 @@ static inline void add_attribute_to_schema(Schema* schema, Attr* attr) {
 }
 
 /**
+ * remove_attribute_from_schema
+ *
+ * @brief Remove Attribute from Schema
+ *
+ * @param[in,out] schema Pointer to the Schema structure from which the attribute will be removed
+ * @param[in]     column_name The name of the attribute to remove
+ */
+static inline void remove_attribute_from_schema(Schema* schema, const char* column_name) {
+    Attr* attr;
+    HASH_FIND_STR(schema->attr_head, column_name, attr);
+    if (attr) {
+        HASH_DEL(schema->attr_head, attr);
+        free(attr->name);
+        free(attr);
+    }
+}
+
+/**
+ * remove_pk_from_schema
+ *
+ * @brief Remove Primary Key from Schema
+ *
+ * @param[in,out] schema Pointer to the Schema structure from which the primary key will be removed
+ * @param[in]     pk_name  The name of the primary key to remove
+ */
+static inline void remove_pk_from_schema(Schema* schema, const char* pk_name) {
+    Pk* pk;
+    HASH_FIND_STR(schema->pk_head, pk_name, pk);
+    if (pk) {
+        HASH_DEL(schema->pk_head, pk);
+        free(pk->name);
+        free(pk);
+    }
+}
+
+/**
+ * remove_fk_from_schema
+ *
+ * @brief Remove Foreign Key from Schema
+ *
+ * @param[in,out] schema Pointer to the Schema structure from which the foreign key will be removed
+ * @param[in]     fk_from The 'from' attribute name of the foreign key to remove
+ */
+static inline void remove_fk_from_schema(Schema* schema, const char* fk_from) {
+    Fk* fk;
+    HASH_FIND_STR(schema->fks_head, fk_from, fk);
+    if (fk) {
+        HASH_DEL(schema->fks_head, fk);
+        free(fk->from);
+        free(fk->table);
+        free(fk->to);
+        free(fk);
+    }
+}
+
+/**
+ * tokenize_dot_schema_column
+ *
+ * @brief Tokenize .schema Column Name into Components
+ *
+ * @param[in] arena       Pointer to the Arena structure for memory allocation
+ * @param[in] column_name The name of the .schema column to tokenize, following the format:
+ * name.TYPE.ATTR.vfs2db
+ * @param[out] toks       Pointer to a DotSchemaTokens structure where the parsed components will be
+ * stored
+ *
+ * @return status_t indicating success or failure of the tokenization process
+ */
+static inline status_t tokenize_dot_schema_column(Arena* arena, const char* column_name,
+                                                  DotSchemaTokens** toks) {
+    status_t status = STATUS_OK;
+
+    // Allocate a new DotSchemaTokens structure to store the parsed components of the .schema column
+    // name, which follows the format: name.TYPE.ATTR.vfs2db
+    TRY_NOT_NULL(*toks = arena_calloc(arena, 1, sizeof(DotSchemaTokens)), cleanup,
+                 STATUS_ALLOC_ERROR, "Failed to allocate DotSchemaTokens for column '%s'",
+                 column_name);
+
+    // Tokenize the path using '/' as a delimiter
+    // First token is the table name
+    char* t              = strtok(column_name, ".");
+    (*toks)->column_name = t ? arena_strdup(arena, t) : NULL;
+
+    // Second token is the record name
+    t                    = strtok(NULL, ".");
+    (*toks)->column_type = t ? arena_strdup(arena, t) : NULL;
+
+    // Third token is the attribute name (we will remove the .vfs2db extension later if present)
+    t                    = strtok(NULL, ".");
+    (*toks)->column_spec = t ? arena_strdup(arena, t) : NULL;
+
+cleanup:
+    return status;
+}
+
+/**
  * count_attributes
  *
  * @brief Count the number of attributes in a Schema

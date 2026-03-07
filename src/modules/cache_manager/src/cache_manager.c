@@ -30,11 +30,12 @@
  *        the hash map of cache blocks and the LRU list pointers.
  */
 static struct {
-    CacheBlock*     map;
-    CacheBlock*     lru_head;
-    CacheBlock*     lru_tail;
-    pthread_mutex_t lock;
+    CacheBlock*     map;      /*< Hash map of cache blocks, keyed by CacheKey */
+    CacheBlock*     lru_head; /*< Pointer to the head of the LRU list (most recently used block) */
+    CacheBlock*     lru_tail; /*< Pointer to the tail of the LRU list (least recently used block) */
+    pthread_mutex_t lock;     /*< Mutex to protect access to the cache data structures */
 
+    // Cache statistics for monitoring and debugging purposes.
     unsigned long hits;
     unsigned long misses;
     unsigned long evictions;
@@ -129,7 +130,6 @@ void cache_add_block(CacheBlock* blk) {
         LOG_DEBUG("Cache full (%d/%d blocks), evicting least recently used block", current_count,
                   CACHE_BLOCKS);
         cache_evict();
-        cache.evictions++;
     }
 
     // Add to hash map
@@ -235,9 +235,6 @@ void cache_evict_blocks_from_toks(struct tokens* toks) {
 
     pthread_mutex_lock(&cache.lock);
 
-    char row_id_path[MAX_SIZE];
-    snprintf(row_id_path, MAX_SIZE, "/%s//", toks->table);
-
     char path[MAX_SIZE];
     snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
 
@@ -245,7 +242,7 @@ void cache_evict_blocks_from_toks(struct tokens* toks) {
     CacheBlock* current = cache.lru_head;
     while (current) {
         CacheBlock* next = current->next;
-        if (strcmp(current->key.query, path) == 0 || strcmp(current->key.query, row_id_path) == 0) {
+        if (strcmp(current->key.query, path) == 0) {
             LOG_DEBUG("Evicting block by path: path='%s', offset=%ld", current->key.query,
                       current->key.offset);
             cache_evict_block(&current->key);

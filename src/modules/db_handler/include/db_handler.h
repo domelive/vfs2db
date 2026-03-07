@@ -48,7 +48,6 @@ extern DbSchema* db_schema;
 
 /**
  * Initialize Database Schema
- * @todo Handle error cases properly
  *
  * @brief Initializes the DbSchema structure by retrieving table names
  *        from the database.
@@ -71,7 +70,6 @@ status_t init_db_schema(DbSchema* db_schema);
 
 /**
  * Initialize Schema Structure
- * @todo Handle error cases properly
  *
  * @brief Initializes the Schema structure by retrieving table information
  *        from the database using `PRAGMA` statements.
@@ -111,7 +109,6 @@ status_t record_exists(struct tokens* toks);
 
 /**
  * Get Attribute Size
- * @todo Handle error cases properly
  *
  * @brief Retrieves the size (in bytes) of a specific attribute value
  *        for a given record in a table.
@@ -126,27 +123,23 @@ status_t record_exists(struct tokens* toks);
 status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes);
 
 /**
- * Get Attribute Bytes
- * @todo Handle error cases properly
+ * Is Attribute NULL
  *
- * @brief Retrieves the bytes of a specific attribute for a given record in a table.
+ * @brief Checks if a specific attribute value is NULL for a given record in a table.
  *
- * This function executes a SQL query to fetch the attribute value
- * and returns it as a dynamically allocated string.
+ * This function executes a SQL query to determine if the specified attribute value
+ * is NULL in the database and returns the result through the `is_null` output parameter.
  *
- * @param[in]  toks  Pointer to tokens structure containing table, record, and attribute
- * information
- * @param[out] bytes Pointer to a char pointer where the attribute value will be stored
- * @param[out] size  Pointer to a size_t variable where the size of the attribute value will be
- * stored
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * @param[out] is_null Pointer to an integer where the result will be stored (1 if NULL, 0 if not
+ * NULL)
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size);
+status_t is_attribute_null(struct tokens* toks, bool* is_null);
 
 /**
  * Get Attribute Type
- * @todo Handle error cases properly
  *
  * @brief Retrieves the SQLite data type of a specific attribute value
  *        for a given record in a table.
@@ -162,7 +155,6 @@ status_t get_attribute_size(struct tokens* toks, size_t* size);
 
 /**
  * Update Attribute Value
- * @todo Handle error cases properly
  *
  * @brief Updates a specific attribute value for a given record in a table.
  *
@@ -184,7 +176,6 @@ status_t get_attribute_type(struct tokens* toks, int* type);
 
 /**
  * Get Table Row IDs
- * @todo Handle error cases properly
  *
  * @brief Retrieves the row IDs of all records in a specified table.
  *
@@ -201,7 +192,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 
 /**
  * Set Attribute to NULL
- * @todo Handle error cases properly
  *
  * @brief Sets a specific attribute value to NULL for a given record in a table.
  *
@@ -214,7 +204,6 @@ status_t set_attribute_empty(struct tokens* toks);
 
 /**
  * Get Row ID from Primary Keys
- * @todo Handle error cases properly
  *
  * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
  * This function constructs and executes a SQL query to find the row ID of a record
@@ -232,7 +221,6 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records);
 
 /**
  * Get Row ID from Primary Keys
- * @todo Handle error cases properly
  *
  * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
  *
@@ -247,5 +235,101 @@ status_t get_table_rowids(const char* table, char* records[], int* n_records);
  */
 status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks,
                             int* row_id);
+
+/**
+ * Insert Record into Table
+ *
+ * @brief Inserts a new record into the specified table with the given row ID.
+ *
+ * This function constructs and executes a SQL query to insert a new record
+ * with the specified row ID into the given table.
+ *
+ * @param[in] table Name of the table to insert into
+ * @param[in] row_id Row ID for the new record to be inserted
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t insert_record_into_table(struct tokens* toks);
+
+/**
+ * Create Empty Table
+ *
+ * @brief Creates a new empty table in the database with the specified name. The new table will
+ * have a single column named `rowid` which is an INTEGER PRIMARY KEY that auto-increments with each
+ * new record inserted.
+ *
+ * This function constructs and executes a SQL query to create the new table if it does not already
+ * exist in the database.
+ *
+ * @param[in] table Name of the table to create
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t create_empty_table(const char* table);
+
+/**
+ * Delete Schema Column
+ *
+ * @brief Deletes a specific column from a table in the database.
+ *
+ * This function constructs and executes a SQL query to remove the specified column
+ * from the given table. It also updates the database schema accordingly.
+ *
+ * @param[in] toks Pointer to tokens structure containing table and column information
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t delete_schema_column(struct tokens* toks);
+
+/**
+ * Add Primary Key to Table
+ *
+ * @brief Adds a new primary key column to a specified table in the database.
+ *
+ * This function constructs and executes a SQL query to add a new primary key column
+ * with the given name and type to the specified table. It also updates the database
+ * schema to reflect the addition of the new primary key.
+ *
+ * @param[in] table Name of the table to modify
+ * @param[in] pk_name Name of the primary key column to add
+ * @param[in] pk_type SQLite data type of the primary key column (e.g., INTEGER, TEXT)
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t add_pk_to_table(const char* table, const char* pk_name, const char* pk_type);
+
+/**
+ * Add Attribute to Table
+ *
+ * @brief Adds a new attribute column to a specified table in the database.
+ *
+ * This function constructs and executes a SQL query to add a new attribute column
+ * with the given name and type to the specified table. It also updates the database
+ * schema to reflect the addition of the new attribute.
+ *
+ * @param[in] table Name of the table to modify
+ * @param[in] attr_name Name of the attribute column to add
+ * @param[in] attr_type SQLite data type of the attribute column (e.g., INTEGER, TEXT)
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t add_attribute_to_table(const char* table, const char* attr_name, const char* attr_type);
+
+/**
+ * Add Foreign Key to Table
+ *
+ * @brief Adds a new foreign key column to a specified table in the database.
+ * This function constructs and executes a SQL query to add a new foreign key column
+ * with the given name and type to the specified table, referencing another table and column.
+ * It also updates the database schema to reflect the addition of the new foreign key.
+ *
+ * @param[in] table Name of the table to modify
+ * @param[in] fk_from Name of the foreign key column to add
+ * @param[in] fk_table Name of the referenced table
+ * @param[in] fk_to Name of the referenced column in the referenced table
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_table,
+                         const char* fk_to);
 
 #endif // DB_HANDLER_H

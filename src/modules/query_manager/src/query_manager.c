@@ -61,6 +61,22 @@ static query_t query_store[] = {
                                      "ON ti.name = fk.\"from\";",
                                      1, NULL},
 
+    [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
+                                            "%s IS NULL "
+                                            "FROM "
+                                            "%s "
+                                            "WHERE "
+                                            "rowid = ?",
+                                            1, NULL},
+
+    [QUERY_TPL_SELECT_ATTRIBUTE_SIZE] = {"SELECT "
+                                         "LENGTH(%s) "
+                                         "FROM "
+                                         "%s "
+                                         "WHERE "
+                                         "rowid = ?",
+                                         1, NULL},
+
     [QUERY_TPL_SELECT_ATTRIBUTE] = {"SELECT "
                                     "%s "
                                     "FROM "
@@ -101,10 +117,44 @@ static query_t query_store[] = {
     [QUERY_TPL_UPDATE_ZERO_BLOB] = {"UPDATE "
                                     "%s "
                                     "SET "
-                                    "%s = %s || zeroblob(?) "
+                                    "%s = CAST(IFNULL(%s, X'') || ? AS BLOB) "
                                     "WHERE "
                                     "rowid = ?",
-                                    1, NULL}};
+                                    1, NULL},
+
+    [QUERY_TPL_INSERT_RECORD_INTO_TABLE] = {"INSERT INTO "
+                                            "%s (rowid) "
+                                            "VALUES (%s)",
+                                            1, NULL},
+
+    [QUERY_TPL_CREATE_EMPTY_TABLE] = {"CREATE TABLE IF NOT EXISTS "
+                                      "%s (rowid INTEGER PRIMARY KEY AUTOINCREMENT)",
+                                      1, NULL},
+
+    [QUERY_TPL_DROP_SCHEMA_COLUMN] = {"ALTER TABLE "
+                                      "%s "
+                                      "DROP COLUMN "
+                                      "%s",
+                                      1, NULL},
+
+    [QUERY_TPL_ADD_PRIMARY_KEY_COLUMN] = {"ALTER TABLE "
+                                          "%s "
+                                          "ADD COLUMN "
+                                          "%s %s PRIMARY KEY",
+                                          1, NULL},
+
+    [QUERY_TPL_ADD_ATTRIBUTE_COLUMN] = {"ALTER TABLE "
+                                        "%s "
+                                        "ADD COLUMN "
+                                        "%s %s",
+                                        1, NULL},
+
+    [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"ALTER TABLE "
+                                          "%s "
+                                          "ADD COLUMN "
+                                          "%s REFERENCES %s(%s)",
+                                          1, NULL},
+};
 
 status_t qm_init(sqlite3* db) {
     LOG_DEBUG("Initializing Query Manager...");

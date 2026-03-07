@@ -98,6 +98,7 @@ char* arena_strdup(Arena* arena, const char* str) {
     if (dup_str) {
         LOG_TRACE("arena_strdup: duplicating string of length %zu", len - 1);
         memcpy(dup_str, str, len);
+        dup_str[len - 1] = '\0'; // Ensure null termination
     }
 
     return dup_str;

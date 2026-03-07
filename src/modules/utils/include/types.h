@@ -140,4 +140,21 @@ struct tokens {
     char* attribute;
 };
 
+/**
+ * @brief Structure representing tokens extracted from a file path for schema lookup.
+ *
+ * Includes the following fields:
+ * - `column_name`: The name of the column (attribute) in the database schema.
+ * - `column_type`: The declared type of the column in the database schema.
+ * - `column_spec`: Additional specifications for the column (i.e. "PK" | "FK" | "ATTR").
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
+ */
+typedef struct DotSchemaTokens {
+    char* column_name;
+    char* column_type;
+    char* column_spec;
+} DotSchemaTokens;
+
 #endif // TYPES_H
