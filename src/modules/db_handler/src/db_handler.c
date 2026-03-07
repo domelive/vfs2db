@@ -445,6 +445,8 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
     size_t        relative_offset = 0;
 
     if (cache_enabled) {
+        LOG_TRACE("Cache enabled, checking for cache hit...");
+        cache_view();
         // Attempt to construct a cache key for the specified attribute and block offset to check
         // for a cache hit before querying the database.
         TRY(get_cache_key_from_toks(toks, BLOCK_OFFSET(offset), &key), cleanup,
@@ -457,13 +459,14 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
             // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
             // `*bytes`... we strdup because of possible threads evicting the block...
-            *bytes = arena_alloc(arena, blk->actual_size + 1);
+            *bytes = arena_calloc(arena, 1, blk->actual_size);
             if (!*bytes) {
                 LOG_ERROR("Failed to allocate memory for cached attribute chunk");
                 return STATUS_ALLOC_ERROR;
             }
             memcpy(*bytes, blk->data, blk->actual_size);
-            (*bytes)[blk->actual_size] = '\0';
+            relative_offset = offset - BLOCK_OFFSET(offset);
+            *bytes += relative_offset;
 
             return status;
         }
@@ -505,12 +508,11 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
     LOG_TRACE("Data retrieved of size %ld", data_size);
 
-    TRY_NOT_NULL(*bytes = arena_alloc(arena, data_size + 1), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(*bytes = arena_calloc(arena, 1, data_size), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
     memcpy(*bytes, data, data_size);
-    (*bytes)[data_size] = '\0';
 
     // Calculate the relative offset within the block for the requested attribute chunk and set the
     // output bytes pointer to the correct position within the retrieved data. This allows for
@@ -522,20 +524,19 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
         LOG_TRACE("Inserting new cache block");
 
         // Create a new CacheBlock for the retrieved attribute chunk data.
-        TRY_NOT_NULL(blk = malloc(sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
+        TRY_NOT_NULL(blk = calloc(1, sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
                      "Failed to allocate CacheBlock for '%s/%s/%s'", toks->table, toks->record,
                      toks->attribute);
 
         // Populate the CacheBlock with the cache key, retrieved data, and actual size of the data.
         blk->key  = *key;
-        blk->data = malloc(data_size);
+        blk->data = calloc(1, data_size);
         if (!blk->data) {
             LOG_ERROR("Failed to allocate memory for cache block data");
             return STATUS_ALLOC_ERROR;
         }
         memcpy(blk->data, data, data_size);
-        ((char**)blk->data)[data_size] = '\0';
-        blk->actual_size               = data_size;
+        blk->actual_size = data_size;
 
         // Add the CacheBlock to the cache to store the retrieved attribute chunk for future access.
         cache_add_block(blk);

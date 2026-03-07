@@ -235,9 +235,6 @@ void cache_evict_blocks_from_toks(struct tokens* toks) {
 
     pthread_mutex_lock(&cache.lock);
 
-    char row_id_path[MAX_SIZE];
-    snprintf(row_id_path, MAX_SIZE, "/%s//", toks->table);
-
     char path[MAX_SIZE];
     snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
 
@@ -245,7 +242,7 @@ void cache_evict_blocks_from_toks(struct tokens* toks) {
     CacheBlock* current = cache.lru_head;
     while (current) {
         CacheBlock* next = current->next;
-        if (strcmp(current->key.query, path) == 0 || strcmp(current->key.query, row_id_path) == 0) {
+        if (strcmp(current->key.query, path) == 0) {
             LOG_DEBUG("Evicting block by path: path='%s', offset=%ld", current->key.query,
                       current->key.offset);
             cache_evict_block(&current->key);
