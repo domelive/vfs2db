@@ -381,12 +381,13 @@ static inline status_t get_attribute_all_bytes(struct tokens* toks, char** bytes
     char* blob_data;
     *size = (size_t)sqlite3_column_bytes(stmt, 0);
 
-    TRY_NOT_NULL(blob_data = arena_alloc(arena, *size), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(blob_data = arena_alloc(arena, *size + 1), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to duplicate attribute data for '%s/%s/%s'", toks->table, toks->record,
                  toks->attribute);
 
     memcpy(blob_data, *bytes, *size);
-    *bytes = blob_data;
+    blob_data[*size] = '\0'; // Null-terminate the data for safe string operations
+    *bytes           = blob_data;
 
     LOG_TRACE("Data retrieved of size %ld", *size);
 
@@ -506,13 +507,18 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
     data_size = (size_t)sqlite3_column_bytes(stmt, 0);
 
+    LOG_TRACE("Data: %s", data);
+
     LOG_TRACE("Data retrieved of size %ld", data_size);
 
-    TRY_NOT_NULL(*bytes = arena_calloc(arena, 1, data_size), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(*bytes = arena_calloc(arena, 1, data_size + 1), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
     memcpy(*bytes, data, data_size);
+    (*bytes)[data_size] = '\0';
+
+    LOG_TRACE("Data copied to bytes: %s", *bytes);
 
     // Calculate the relative offset within the block for the requested attribute chunk and set the
     // output bytes pointer to the correct position within the retrieved data. This allows for
