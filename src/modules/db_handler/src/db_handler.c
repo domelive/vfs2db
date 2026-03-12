@@ -460,7 +460,7 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
 
             // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
             // `*bytes`... we strdup because of possible threads evicting the block...
-            *bytes = arena_calloc(arena, 1, blk->actual_size);
+            *bytes = arena_calloc(arena, 1, blk->actual_size + 1);
             if (!*bytes) {
                 LOG_ERROR("Failed to allocate memory for cached attribute chunk");
                 return STATUS_ALLOC_ERROR;
@@ -516,7 +516,6 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  toks->record, toks->attribute);
 
     memcpy(*bytes, data, data_size);
-    (*bytes)[data_size] = '\0';
 
     LOG_TRACE("Data copied to bytes: %s", *bytes);
 

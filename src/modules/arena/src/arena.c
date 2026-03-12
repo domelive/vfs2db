@@ -46,7 +46,7 @@ void arena_destroy(Arena* arena) {
 }
 
 void* arena_alloc(Arena* arena, size_t size) {
-    assert(arena != NULL && "arena_alloc called with NULL arrena");
+    assert(arena != NULL && "arena_alloc called with NULL arena");
 
     // Calculate the padding needed to align the allocation to ARENA_ALIGNMENT bytes. This ensures
     // that all allocations from the arena are properly aligned, which can improve performance and

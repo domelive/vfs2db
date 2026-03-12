@@ -1,5 +1,6 @@
 *.db
 *.db-shm
 *.db-wal
+*.webp
 vfs2db
 build/
