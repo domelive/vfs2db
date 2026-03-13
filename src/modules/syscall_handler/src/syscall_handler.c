@@ -632,12 +632,15 @@ int vfs2db_utimens(const char* path, const struct timespec tv[2], struct fuse_fi
 
     LOG_FUSE_ENTER("utimens", path);
 
-    LOG_WARN("utimens is not supported in VFS2DB, file timestamps are managed by the filesystem "
-             "and cannot be modified");
+    if (!check_column_exists_in_dotschema(path)) {
+        LOG_WARN("Path does not exist: %s", path);
+        LOG_FUSE_EXIT("utimens", -ENOENT);
+        return -ENOENT;
+    }
 
-    LOG_FUSE_EXIT("utimens", -ENOENT);
+    LOG_FUSE_EXIT("utimens", 0);
 
-    return -ENOENT;
+    return 0;
 }
 
 int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset,
