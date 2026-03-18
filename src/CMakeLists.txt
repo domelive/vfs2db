@@ -5,7 +5,6 @@ add_subdirectory(modules/utils)
 add_subdirectory(modules/query_manager)
 add_subdirectory(modules/db_handler)
 add_subdirectory(modules/syscall_handler)
-add_subdirectory(modules/cache_manager)
 add_subdirectory(modules/logger)
 add_subdirectory(modules/arena)
 
@@ -21,7 +20,6 @@ target_link_libraries(vfs2db
         db_handler
         query_manager
         utils
-        cache_manager
         PkgConfig::FUSE3
         PkgConfig::SQLITE3
 )

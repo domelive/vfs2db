@@ -16,7 +16,6 @@ target_link_libraries(db_handler
         arena
         logger
         query_manager
-        cache_manager
     PRIVATE
         PkgConfig::SQLITE3
 )

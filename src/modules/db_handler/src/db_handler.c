@@ -23,10 +23,6 @@
 
 #include "db_handler.h"
 
-// Portability macro to calculate the block offset for a given file offset, ensuring that it is
-// aligned to the block size used in the VFS2DB filesystem.
-#define BLOCK_OFFSET(offset) ((off_t)((offset / BLOCK_SIZE) * BLOCK_SIZE))
-
 static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficient allocations */
 
 /**
@@ -94,51 +90,6 @@ static inline int parse_sqlite_type(const char* typestr) {
     LOG_TRACE("Fallback to SQLITE_TEXT");
 
     return SQLITE_TEXT;
-}
-
-/**
- * Get Cache Key from Tokens
- *
- * @brief Constructs a CacheKey structure from the given path tokens and block offset. The CacheKey
- * is used to identify a specific block of data in the cache based on the file path and offset.
- *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
- * @param[in] block_offset The block-aligned offset for which to create the cache key
- * @param[out] key Pointer to a CacheKey pointer where the resulting CacheKey will be stored
- *
- * @return STATUS_OK on success, STATUS_ALLOC_ERROR on memory allocation failure
- */
-static inline status_t get_cache_key_from_toks(struct tokens* toks, off_t block_offset,
-                                               CacheKey** key) {
-    status_t status = STATUS_OK;
-
-    // Construct the file path for the cache key based on the table, record, and attribute
-    // information from the tokens.
-    char path[MAX_SIZE];
-
-    if (toks->table && toks->record && toks->attribute) {
-        snprintf(path, MAX_SIZE, "/%s/%s/%s", toks->table, toks->record, toks->attribute);
-    } else if (toks->table && toks->record) {
-        snprintf(path, MAX_SIZE, "/%s//", toks->table, toks->record);
-    } else {
-        LOG_ERROR("Invalid tokens for cache key: table='%s', record='%s', attribute='%s'",
-                  toks->table, toks->record, toks->attribute);
-        return STATUS_DB_ERROR;
-    }
-
-    LOG_TRACE("Getting attribute bytes: path='%s', block_offset=%ld", path, block_offset);
-
-    // Allocate a new CacheKey structure to store the cache key information for the specified path
-    // and block offset. The CacheKey will be used to identify the corresponding block of data in
-    // the cache for read and write operations on the attribute file in the VFS2DB filesystem.
-    TRY_NOT_NULL(*key = calloc(1, sizeof(CacheKey)), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to allocate CacheKey for path '%s'", path);
-
-    strncpy((*key)->query, path, strlen(path) + 1);
-    (*key)->offset = block_offset;
-
-cleanup:
-    return status;
 }
 
 status_t init_db_schema(DbSchema* db_schema) {
@@ -346,7 +297,7 @@ cleanup:
     return status;
 }
 
-static inline status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
+status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size) {
     ensure_arena_init();
 
     LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
@@ -431,55 +382,20 @@ cleanup:
     return status;
 }
 
-status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes) {
+status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes, size_t size) {
     ensure_arena_init();
 
     LOG_TRACE("Getting attribute chunk bytes: %s/%s/%s, offset=%ld", toks->table, toks->record,
               toks->attribute, offset);
 
-    status_t      status          = STATUS_OK;
-    CacheKey*     key             = NULL;
-    CacheBlock*   blk             = NULL;
-    sqlite3_stmt* stmt            = NULL;
-    char*         data            = NULL;
-    size_t        data_size       = 0;
-    size_t        relative_offset = 0;
-
-    if (cache_enabled) {
-        LOG_TRACE("Cache enabled, checking for cache hit...");
-        cache_view();
-        // Attempt to construct a cache key for the specified attribute and block offset to check
-        // for a cache hit before querying the database.
-        TRY(get_cache_key_from_toks(toks, BLOCK_OFFSET(offset), &key), cleanup,
-            "Failed to get cache key from tokens for '%s/%s/%s'", toks->table, toks->record,
-            toks->attribute);
-
-        // Cache HIT
-        if ((blk = cache_get(key)) != NULL) {
-            LOG_DEBUG("Cache hit for '%s' at offset %ld", key->query, key->offset);
-
-            // NOTE: we could get rid of this strdup, by just assigning `(char*) blk->data` to
-            // `*bytes`... we strdup because of possible threads evicting the block...
-            *bytes = arena_calloc(arena, 1, blk->actual_size + 1);
-            if (!*bytes) {
-                LOG_ERROR("Failed to allocate memory for cached attribute chunk");
-                return STATUS_ALLOC_ERROR;
-            }
-            memcpy(*bytes, blk->data, blk->actual_size);
-            relative_offset = offset - BLOCK_OFFSET(offset);
-            *bytes += relative_offset;
-
-            return status;
-        }
-
-        // Cache MISS
-        LOG_DEBUG("Cache miss for '%s' at offset %ld, fetching from DB", key->query, key->offset);
-    }
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+    char*         data   = NULL;
 
     // Build the statement
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE,
-                                                         toks->attribute, BLOCK_OFFSET(offset),
-                                                         BLOCK_SIZE, toks->table),
+    TRY_NOT_NULL(stmt =
+                     qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE,
+                                                      toks->attribute, offset, size, toks->table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for attribute chunk bytes: '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
@@ -505,56 +421,12 @@ status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** byt
                  "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
                  toks->record, toks->attribute);
 
-    data_size = (size_t)sqlite3_column_bytes(stmt, 0);
-
-    LOG_TRACE("Data: %s", data);
-
-    LOG_TRACE("Data retrieved of size %ld", data_size);
-
-    TRY_NOT_NULL(*bytes = arena_calloc(arena, 1, data_size + 1), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to duplicate attribute chunk data for '%s/%s/%s'", toks->table,
-                 toks->record, toks->attribute);
-
-    memcpy(*bytes, data, data_size);
+    // LOG_TRACE("Data: %s", data);
+    memcpy(*bytes, data, size);
 
     LOG_TRACE("Data copied to bytes: %s", *bytes);
 
-    // Calculate the relative offset within the block for the requested attribute chunk and set the
-    // output bytes pointer to the correct position within the retrieved data. This allows for
-    // correct retrieval of the attribute data even when the requested offset is not aligned.
-    relative_offset = offset - BLOCK_OFFSET(offset);
-    *bytes += relative_offset;
-
-    if (cache_enabled) {
-        LOG_TRACE("Inserting new cache block");
-
-        // Create a new CacheBlock for the retrieved attribute chunk data.
-        TRY_NOT_NULL(blk = calloc(1, sizeof(CacheBlock)), cleanup, STATUS_ALLOC_ERROR,
-                     "Failed to allocate CacheBlock for '%s/%s/%s'", toks->table, toks->record,
-                     toks->attribute);
-
-        // Populate the CacheBlock with the cache key, retrieved data, and actual size of the data.
-        blk->key  = *key;
-        blk->data = calloc(1, data_size);
-        if (!blk->data) {
-            LOG_ERROR("Failed to allocate memory for cache block data");
-            return STATUS_ALLOC_ERROR;
-        }
-        memcpy(blk->data, data, data_size);
-        blk->actual_size = data_size;
-
-        // Add the CacheBlock to the cache to store the retrieved attribute chunk for future access.
-        cache_add_block(blk);
-        LOG_DEBUG("Fetched %zu bytes from DB and cached", blk->actual_size);
-
-        key = NULL; // Ownership transferred to cache block, avoid double free
-
-        cache_view();
-    }
-
 cleanup:
-    if (key)
-        free(key);
     if (stmt)
         sqlite3_finalize(stmt);
 
@@ -819,19 +691,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
         LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
     }
 
-    if (cache_enabled) {
-        // Remove ALL blocks with key that has path = rebuilt path
-        CacheKey* key = NULL;
-        TRY(get_cache_key_from_toks(toks, 0, &key), cleanup,
-            "Failed to get cache key from tokens for eviction of '%s/%s/%s'", toks->table,
-            toks->record, toks->attribute);
-
-        cache_evict_blocks_from_toks(toks);
-
-        LOG_TRACE("Evicting cache blocks for updated attribute: path='%s'", key->query);
-        free(key);
-    }
-
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
@@ -887,17 +746,6 @@ status_t set_attribute_empty(struct tokens* toks) {
 
     int changes = sqlite3_changes(db);
     LOG_DEBUG("Attribute set to empty successfully, %d rows affected", changes);
-
-    if (cache_enabled) {
-        // Evict the corresponding cache blocks, if exists
-        CacheKey* key = NULL;
-        TRY(get_cache_key_from_toks(toks, 0, &key), cleanup,
-            "Failed to get cache key from tokens for eviction of '%s/%s/%s'", toks->table,
-            toks->record, toks->attribute);
-        LOG_TRACE("Evicting cache blocks for emptyified attribute: path='%s'", key->query);
-        cache_evict_blocks_from_toks(toks);
-        free(key);
-    }
 
 cleanup:
     if (stmt)
@@ -1016,32 +864,6 @@ status_t insert_record_into_table(struct tokens* toks) {
     // successfully inserted into the database.
     int changes = sqlite3_changes(db);
     LOG_DEBUG("Record inserted successfully, %d rows affected", changes);
-
-    // If caching is enabled, evict any corresponding cache blocks that may exist for the newly
-    // inserted record to ensure that subsequent queries for this record will fetch the updated data
-    // from the database rather than stale data from the cache.
-    if (cache_enabled) {
-        // Evict the corresponding cache blocks, if exists
-        CacheKey* key = NULL;
-        TRY(get_cache_key_from_toks(toks, 0, &key), cleanup,
-            "Failed to get cache key from tokens for eviction of '%s/%s'", toks->table,
-            toks->record);
-        LOG_TRACE("Evicting cache blocks for new record insertion: path='%s'", key->query);
-
-        // We cannot evict blocks using toks directly, because we want to evict all blocks related
-        // to the record (all attributes), so we create a new toks with empty attribute for
-        // eviction.
-        // TODO: make a separate function that takes the path. Maybe it is easier like that.
-        struct tokens toks_for_eviction = {
-            .table     = toks->table,
-            .record    = toks->record,
-            .attribute = "", // Evict all attributes for the record
-        };
-
-        cache_evict_blocks_from_toks(&toks_for_eviction);
-
-        free(key);
-    }
 
 cleanup:
     if (stmt)

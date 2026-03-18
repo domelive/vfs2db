@@ -36,7 +36,6 @@
 #include <unistd.h>
 
 #include "arena.h"
-#include "cache_manager.h"
 #include "errors.h"
 #include "helpers.h"
 #include "logger.h"
@@ -108,6 +107,23 @@ status_t init_schema(Schema* schema);
 status_t record_exists(struct tokens* toks);
 
 /**
+ * Get Attribute All Bytes
+ *
+ * @brief Retrieves the entire value of a specific attribute for a given record in a table as a byte
+ * array.
+ *
+ * This function executes a SQL query to fetch the attribute value from the database and returns it
+ * as a byte array along with its size. The caller is responsible for freeing the allocated byte
+ * array.
+ *
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * @param[out] bytes Pointer to a char pointer where the allocated byte array will be stored
+ * @param[out] size Pointer to a size_t variable where the size of the retrieved byte array will be
+ * stored
+ */
+status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size);
+
+/**
  * Get Attribute Size
  *
  * @brief Retrieves the size (in bytes) of a specific attribute value
@@ -120,7 +136,7 @@ status_t record_exists(struct tokens* toks);
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes);
+status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes, size_t size);
 
 /**
  * Is Attribute NULL

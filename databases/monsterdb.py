@@ -9,7 +9,7 @@ DB_NAME = 'stress_test.db'
 NUM_USERS = 10000         # Numero di utenti base
 NUM_WIDE_ROWS = 100       # Righe nella tabella "larga"
 CHAIN_DEPTH = 10          # Profondità delle tabelle a catena (FK)
-BLOB_SIZE = 1 * 1024 * 1024 # 10 MB di dati binari per testare i limiti di I/O
+BLOB_SIZE = 100 * 1024 * 1024 # 10 MB di dati binari per testare i limiti di I/O
 
 def generate_random_string(length=10):
     return ''.join(random.choices(string.ascii_letters, k=length))

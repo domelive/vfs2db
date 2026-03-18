@@ -53,8 +53,6 @@ typedef enum status_t {
     STATUS_DB_PERMISSION,
     STATUS_DB_NOTFOUND,
 
-    STATUS_CACHE_FULL,
-    STATUS_CACHE_ERROR,
 } status_t;
 
 /**

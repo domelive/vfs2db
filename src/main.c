@@ -21,12 +21,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdlib.h>
+
 #include "logger.h"
 #include "syscall_handler.h"
 
 sqlite3*  db            = NULL; /**< Database connection handle */
 DbSchema* db_schema     = NULL; /**< Database schema structure */
 int       cache_enabled = 1;    /**< Flag to enable or disable caching (default: enabled) */
+char*     db_path       = NULL;
 
 /**
  * @brief FUSE operations structure mapping filesystem calls to handler functions.
@@ -64,7 +67,6 @@ struct options {
     const char* db_path;
     const char* log_level;
     const char* log_file;
-    int         cache_enabled;
 };
 
 /**
@@ -74,9 +76,8 @@ struct options {
  * The "db=%s" option allows the user to specify the path to the database file.
  */
 #define OPTION(t, p) {t, offsetof(struct options, p), 1}
-static const struct fuse_opt option_spec[] = {
-    OPTION("db=%s", db_path), OPTION("log=%s", log_level), OPTION("logfile=%s", log_file),
-    OPTION("cache_enabled=%d", cache_enabled), FUSE_OPT_END};
+static const struct fuse_opt option_spec[] = {OPTION("db=%s", db_path), OPTION("log=%s", log_level),
+                                              OPTION("logfile=%s", log_file), FUSE_OPT_END};
 
 int main(int argc, char* argv[]) {
     if (logger_init_default() != 0) {
@@ -109,8 +110,6 @@ int main(int argc, char* argv[]) {
             LOG_ERROR("Failed to reconfigure logger, continuing with default settings.");
     }
 
-    cache_enabled = opt.cache_enabled;
-
     LOG_DEBUG("Parsing command-line arguments...");
 
     if (opt.db_path == NULL) {
@@ -131,11 +130,20 @@ int main(int argc, char* argv[]) {
     int check = sqlite3_open_v2(opt.db_path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
     if (check != SQLITE_OK) {
         LOG_FATAL("Cannot open database: %s", sqlite3_errmsg(db));
-        // free(opt.db_path);
         fuse_opt_free_args(&args);
         logger_cleanup();
         return 1;
     }
+
+    db_path = realpath(opt.db_path, NULL);
+    if (!db_path) {
+        LOG_FATAL("Resolution of relative path of %s failed", opt.db_path);
+        fuse_opt_free_args(&args);
+        logger_cleanup();
+        return 1;
+    }
+
+    LOG_INFO("Database path: %s", db_path);
 
     LOG_INFO("Database opened successfully");
 

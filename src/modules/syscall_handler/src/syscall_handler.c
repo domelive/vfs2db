@@ -25,6 +25,7 @@
 
 extern sqlite3*  db;        /**< Database connection handle */
 extern DbSchema* db_schema; /**< Database schema structure */
+extern char*     db_path;
 
 static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficient allocations */
 
@@ -419,6 +420,12 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
     // don't set.
     memset(st, 0, sizeof(*st));
 
+    struct stat time_st;
+    if (stat(db_path, &time_st) != 0) {
+        LOG_ERROR("Failed to stat database file for time attributes: %s", strerror(errno));
+        goto cleanup;
+    }
+
     // If path doesn't end with .vfs2db, it's either a directory or a .schema file
     if (strncmp(&path[strlen(path) - 7], ".vfs2db", 7)) {
         if (strstr(path, ".Trash") != NULL) {
@@ -437,7 +444,8 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             st->st_nlink = 2;
             st->st_uid   = getuid();
             st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time(NULL);
+
+            st->st_atime = st->st_mtime = time_st.st_mtime;
 
             LOG_TRACE("getattr: %s is a .schema directory", path);
         }
@@ -461,7 +469,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             st->st_nlink = 2;
             st->st_uid   = getuid();
             st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time(NULL);
+            st->st_atime = st->st_mtime = time_st.st_mtime;
 
             LOG_TRACE("getattr: %s is a directory", path);
         }
@@ -475,7 +483,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             st->st_nlink = 1;
             st->st_uid   = getuid();
             st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time(NULL);
+            st->st_atime = st->st_mtime = time_st.st_mtime;
             st->st_size = 0; // We will generate content dynamically, so we can set size to 0
             LOG_TRACE("getattr: %s is a file in a .schema directory", path);
             goto cleanup;
@@ -508,14 +516,14 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
                 st->st_nlink = 1;
                 st->st_uid   = getuid();
                 st->st_gid   = getgid();
-                st->st_atime = st->st_mtime = time(NULL);
+                st->st_atime = st->st_mtime = time_st.st_mtime;
                 LOG_TRACE("getattr: %s is a symlink (FK)", path);
             } else {
                 st->st_mode  = S_IFREG | 0644;
                 st->st_nlink = 1;
                 st->st_uid   = getuid();
                 st->st_gid   = getgid();
-                st->st_atime = st->st_mtime = time(NULL);
+                st->st_atime = st->st_mtime = time_st.st_mtime;
                 LOG_TRACE("getattr: %s is a regular file", path);
             }
 
@@ -1004,19 +1012,18 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
         return 0;
     }
 
-    // Get the attribute value bytes from the database for the specified offset.
-    if (get_attribute_chunk_bytes(toks, offset, &bytes) == STATUS_DB_ERROR) {
-        LOG_ERROR("read: failed to get attribute bytes");
-        LOG_FUSE_EXIT("read", -EIO);
-        return -EIO;
-    }
-
     // Calculate how many bytes we can copy to the buffer based on the requested size
     // and the total size of the attribute value. We need to ensure that we do not read
     // beyond the end of the attribute value, so we take the minimum of the requested
     // size and the available bytes.
     size_t bytes_to_copy = MIN(size, total_size - offset);
-    memcpy(buffer, bytes, bytes_to_copy);
+
+    // Get the attribute value bytes from the database for the specified offset.
+    if (get_attribute_chunk_bytes(toks, offset, &buffer, bytes_to_copy) == STATUS_DB_ERROR) {
+        LOG_ERROR("read: failed to get attribute bytes");
+        LOG_FUSE_EXIT("read", -EIO);
+        return -EIO;
+    }
 
     LOG_DEBUG("read: returned %zu bytes from offset %ld", bytes_to_copy, offset);
     LOG_FUSE_EXIT("read", bytes_to_copy);
@@ -1195,14 +1202,15 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     // Get the values of all the FKs that point to the same target table to resolve the
     // link target based on the combination of their values.
     for (int i = 0; i < n_same_fks; i++) {
-        char* value = NULL;
+        char*  value = NULL;
+        size_t size;
 
         struct tokens fk_toks = {
             .table = toks->table, .record = toks->record, .attribute = fks[i]->from};
 
         // Get the value of the FK attribute from the database for the specified record
         // to use in resolving the link target.
-        TRY(get_attribute_chunk_bytes(&fk_toks, 0, &value), cleanup,
+        TRY(get_attribute_all_bytes(&fk_toks, &value, &size), cleanup,
             "Failed to get FK value for %s.%s", fk_toks.table, fk_toks.attribute);
 
         fk_values[i] = value;
