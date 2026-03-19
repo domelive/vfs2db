@@ -81,6 +81,7 @@ typedef struct Fk {
     char*          from;
     char*          table;
     char*          to;
+    int            id;
     int            sqlite_type;
     UT_hash_handle hh;
 } Fk;

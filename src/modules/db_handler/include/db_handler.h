@@ -207,6 +207,23 @@ status_t get_attribute_type(struct tokens* toks, int* type);
 status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset);
 
 /**
+ * Update Foreign Key Value
+ *
+ * @brief Updates the value of a foreign key attribute for a given record in a table.
+ *
+ * This function performs the following steps executes a SQL query to update the foreign key
+ * attribute value in the database.
+ *
+ * @param[in] toks_linkpath Pointer to tokens structure containing table, record, and foreign key
+ * information for the symbolic link path
+ * @param[in] fk_record The new value for the foreign key attribute, which is the record identifier
+ * of the target record that the symbolic link should point to
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t update_fk_value(struct tokens* toks_linkpath, const char* fk_record);
+
+/**
  * Set Attribute to NULL
  *
  * @brief Sets a specific attribute value to NULL for a given record in a table.
@@ -214,7 +231,8 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
  * This function executes a SQL query to update the specified attribute value
  * to NULL in the database. It also evicts the corresponding cache block if it exists.
  *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * @param[in] toks Pointer to tokens structure containing table, record, and attribute
+ * information
  */
 status_t set_attribute_empty(struct tokens* toks);
 

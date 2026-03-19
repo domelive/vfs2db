@@ -199,6 +199,20 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
                 struct fuse_file_info* fi);
 
 /**
+ * VFS2DB Symlink
+ *
+ * @brief Creates a symbolic link in the VFS2DB filesystem, which corresponds to creating a foreign
+ * key reference in the database. This function is currently a placeholder and not implemented yet,
+ * as the logic for handling foreign key references and their corresponding symbolic links is not
+ * implemented yet.
+ *
+ * @param[in] target  The target path that the symbolic link points to (not used in this case)
+ * @param[in] linkpath The symbolic link path to create (not used in this case
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_symlink(const char* target, const char* linkpath);
+
+/**
  * VFS2DB Unlink
  *
  * @brief Deletes a file in the VFS2DB filesystem, which corresponds to deleting an attribute or

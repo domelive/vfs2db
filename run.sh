@@ -13,4 +13,4 @@ if [ $? -ne 0 ]; then
 fi
 
 mkdir -p /tmp/test
-./src/vfs2db -f -o db=../databases/stress_test.db -o log=debug -o auto_cache /tmp/test
+./src/vfs2db -f -o db=../databases/sqlite-sakila.db -o log=trace -o auto_cache /tmp/test

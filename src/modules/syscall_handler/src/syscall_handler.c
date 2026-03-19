@@ -22,6 +22,10 @@
  */
 
 #include "syscall_handler.h"
+#include "errors.h"
+#include "helpers.h"
+#include "logger.h"
+#include "types.h"
 
 extern sqlite3*  db;        /**< Database connection handle */
 extern DbSchema* db_schema; /**< Database schema structure */
@@ -272,7 +276,7 @@ static inline bool check_dotschema(const char* path) {
                   toks->record ? toks->record : "(null)",
                   toks->attribute ? toks->attribute : "(null)");
 
-        if (toks->record && !strcmp(toks->record, ".schema") != NULL) {
+        if (toks->record && strcmp(toks->record, ".schema") == 0) {
             LOG_TRACE("Path '%s' is a .schema directory", path);
             return true;
         }
@@ -965,9 +969,10 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
                 struct fuse_file_info* fi) {
     (void)fi;
 
+    LOG_FUSE_ENTER("read", path);
+
     ensure_arena_init();
 
-    LOG_FUSE_ENTER("read", path);
     LOG_TRACE("read: size=%zu, offset=%ld", size, offset);
 
     // Remove extension and tokenize path to get table, record, and attribute for schema
@@ -1031,6 +1036,46 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     return bytes_to_copy;
 }
 
+int vfs2db_symlink(const char* target, const char* linkpath) {
+    LOG_FUSE_ENTER("symlink", linkpath);
+
+    ensure_arena_init();
+
+    status_t status = STATUS_OK;
+
+    LOG_TRACE("symlink: target=%s, linkpath=%s", target, linkpath);
+
+    int num_slashes = COUNT_CHAR(target, '/');
+
+    // We expect the target to be in the format /table/record/attribute.vfs2db for foreign key
+    // symlinks. We need to extract the table name from the target path to determine which table the
+    // symlink is referencing. The table name is located after the first slash and before the second
+    // slash in the target path.
+    for (int i = 0; i < num_slashes - 2; i++) {
+        target = strchr(target, '/') + 1;
+    }
+
+    LOG_DEBUG("symlink: resolved target table name for FK symlink: %s", target);
+
+    struct tokens* toks_target;
+    TRY_NOT_NULL(toks_target = tokenize_path(target), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to tokenize target'%s'", target);
+
+    char* linkpath_noext = remove_extension(linkpath);
+
+    struct tokens* toks_linkpath;
+    TRY_NOT_NULL(toks_linkpath = tokenize_path(linkpath_noext), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to tokenize linkpath '%s'", linkpath);
+
+    TRY(update_fk_value(toks_linkpath, toks_target->record), cleanup,
+        "Failed to update FK value for linkpath '%s'", linkpath);
+
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("symlink", code);
+    return code;
+}
+
 int vfs2db_unlink(const char* path) {
     ensure_arena_init();
 
@@ -1050,9 +1095,13 @@ int vfs2db_unlink(const char* path) {
         TRY(delete_schema_column(toks), cleanup,
             "Failed to delete .schema entry '%s' in table '%s'", toks->attribute, toks->table);
     } else {
-        LOG_WARN("unlink: file deletion is not supported yet, record and attribute "
-                 "deletion is not "
-                 "implemented");
+        Schema* schema = NULL;
+        TRY_NOT_NULL(schema = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR,
+                     "Table not found in schema: %s", toks->table);
+
+        if (!is_fk_in_schema(schema, toks->attribute)) {
+            status = STATUS_ILLEGAL_INSTRUCTION;
+        }
     }
 
 cleanup:
@@ -1190,7 +1239,8 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     // same table that point to the same target table, which can be used to create
     // composite foreign keys.
     HASH_FOREACH(current_fk, table->fks_head) {
-        if (strncmp(fk->table, current_fk->table, strlen(fk->table)) == 0) {
+        if (strncmp(fk->table, current_fk->table, strlen(fk->table)) == 0 &&
+            fk->id == current_fk->id) {
             fks[n_same_fks++] = current_fk;
         }
     }

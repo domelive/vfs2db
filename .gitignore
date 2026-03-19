@@ -4,3 +4,5 @@
 *.webp
 vfs2db
 build/
+.clangd
+compile_commands.json

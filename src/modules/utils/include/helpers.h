@@ -473,4 +473,23 @@ static inline void free_schema_hashmap(DbSchema* schema) {
     }
 }
 
+/**
+ * count_char_occurrences
+ *
+ * @brief Count the number of occurrences of a character in a string
+ *
+ * @param[in] str The string to search
+ * @param[in] c   The character to count
+ *
+ * @return The number of occurrences of the character in the string
+ */
+static inline int count_char_occurrences(const char* str, char c) {
+    int count = 0;
+    for (const char* p = str; *p; p++) {
+        if (*p == c)
+            count++;
+    }
+    return count;
+}
+
 #endif // HELPERS_H

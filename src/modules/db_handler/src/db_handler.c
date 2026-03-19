@@ -22,6 +22,8 @@
  */
 
 #include "db_handler.h"
+#include "errors.h"
+#include "query_manager.h"
 
 static __thread Arena* arena = NULL; /**< Thread-local memory arena for efficient allocations */
 
@@ -154,10 +156,11 @@ status_t init_schema(Schema* schema) {
         const bool  is_pk           = sqlite3_column_int(stmt, 2);
         const char* fk_table        = sqlite3_column_text(stmt, 3);
         const char* fk_column_name  = sqlite3_column_text(stmt, 4);
+        const int   fk_id           = sqlite3_column_int64(stmt, 5);
 
-        LOG_TRACE("Column: %s, Type: %s, PK: %d, FK Table: %s, FK Column: %s", column_name,
-                  column_type_str, is_pk, fk_table ? fk_table : "NULL",
-                  fk_column_name ? fk_column_name : "NULL");
+        LOG_TRACE("Column: %s, Type: %s, PK: %d, FK Table: %s, FK Column: %s, FK Id: %d",
+                  column_name, column_type_str, is_pk, fk_table ? fk_table : "NULL",
+                  fk_column_name ? fk_column_name : "NULL", fk_id);
 
         // Check if primary key
         if (is_pk) {
@@ -217,6 +220,9 @@ status_t init_schema(Schema* schema) {
             TRY_NOT_NULL(fk->to = strdup(fk_column_name), cleanup, STATUS_ALLOC_ERROR,
                          "Failed to duplicate FK column name '%s' for FK in table '%s'",
                          fk_column_name, schema->name);
+
+            // Store the foreign key ID from the query result in the Fk structure.
+            fk->id = fk_id;
 
             // Parse the SQLite type affinity for the foreign key column based on its declared type
             // and store it in the Fk structure.
@@ -697,6 +703,46 @@ cleanup:
     if (blob_handle)
         sqlite3_blob_close(blob_handle);
 
+    return status;
+}
+
+status_t update_fk_value(struct tokens* toks_linkpath, const char* fk_record) {
+    ensure_arena_init();
+
+    LOG_TRACE("Updating FK value: %s/%s/%s -> %s", toks_linkpath->table, toks_linkpath->record,
+              toks_linkpath->attribute, fk_record);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the UPDATE statement to set the specified foreign key attribute to the new value for
+    // the given table and record using the QUERY_TPL_UPDATE_FK template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_UPDATE_ATTRIBUTE,
+                                                         toks_linkpath->table,
+                                                         toks_linkpath->attribute),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for updating FK value for '%s/%s/%s'",
+                 toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+
+    // Bind the new foreign key value to the statement based on its SQLite type.
+    TRY_SQLITE(sqlite3_bind_text(stmt, 1, fk_record, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+               "Failed to bind new FK value for updating FK value for '%s/%s/%s'",
+               toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+
+    // Bind the record ID for the WHERE clause to specify which record's foreign key value should be
+    // updated.
+    TRY_SQLITE(sqlite3_bind_text(stmt, 2, toks_linkpath->record, -1, SQLITE_TRANSIENT), SQLITE_OK,
+               cleanup, "Failed to bind record value for updating FK value for '%s/%s/%s'",
+               toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+
+    // Execute the UPDATE statement to update the foreign key value for the specified record.
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute UPDATE query for updating FK value for '%s/%s/%s'",
+               toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
     return status;
 }
 
