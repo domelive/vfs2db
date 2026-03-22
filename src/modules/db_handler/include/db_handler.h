@@ -209,19 +209,36 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 /**
  * Update Foreign Key Value
  *
- * @brief Updates the value of a foreign key attribute for a given record in a table.
+ * @brief Updates a foreign key attribute value for a given record in a table.
  *
- * This function performs the following steps executes a SQL query to update the foreign key
- * attribute value in the database.
+ * This function constructs and executes a SQL query to update the specified foreign key attribute
+ * value for the given record in the source table. It is used to maintain referential integrity
+ * when the target of a foreign key relationship changes.
  *
- * @param[in] toks_linkpath Pointer to tokens structure containing table, record, and foreign key
- * information for the symbolic link path
- * @param[in] fk_record The new value for the foreign key attribute, which is the record identifier
- * of the target record that the symbolic link should point to
- *
+ * @param[in] toks_linkpath Pointer to tokens structure containing table, record, and attribute
+ * information for the source of the foreign key to update
+ * @param[in] fk_record The new record value to set for the foreign key attribute
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
 status_t update_fk_value(struct tokens* toks_linkpath, const char* fk_record);
+
+/**
+ * Update Foreign Key by Target Reference
+ *
+ * @brief Updates a foreign key in a source table by finding which FK points to the target.
+ *        This method is robust against FUSE temporary filenames.
+ *
+ * @param[in] source_table   The table containing the FK to update
+ * @param[in] source_record  The record (rowid) in source_table to update
+ * @param[in] target_table   The table being referenced by the FK
+ * @param[in] target_attr    The attribute in target_table being referenced
+ * @param[in] target_record  The record (rowid) in target_table to reference
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t update_fk_value_by_target(const char* source_table, const char* source_record,
+                                   const char* source_attr, const char* target_table,
+                                   const char* target_attr, const char* target_record);
 
 /**
  * Set Attribute to NULL
@@ -289,11 +306,11 @@ status_t insert_record_into_table(struct tokens* toks);
  * Create Empty Table
  *
  * @brief Creates a new empty table in the database with the specified name. The new table will
- * have a single column named `rowid` which is an INTEGER PRIMARY KEY that auto-increments with each
- * new record inserted.
+ * have a single column named `rowid` which is an INTEGER PRIMARY KEY that auto-increments with
+ * each new record inserted.
  *
- * This function constructs and executes a SQL query to create the new table if it does not already
- * exist in the database.
+ * This function constructs and executes a SQL query to create the new table if it does not
+ * already exist in the database.
  *
  * @param[in] table Name of the table to create
  *

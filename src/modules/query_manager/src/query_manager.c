@@ -63,7 +63,7 @@ static query_t query_store[] = {
                                      1, NULL},
 
     [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
-                                            "%s IS NULL "
+                                            "%s IS NULL OR %s = ''"
                                             "FROM "
                                             "%s "
                                             "WHERE "

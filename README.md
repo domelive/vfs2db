@@ -422,12 +422,16 @@ fusermount3 -u /tmp/test
 ## Limitations
 
 - `set_attribute_empty` function does not work for `NOT NULL` attributes.
-- `vfs2db_readlink` syscall does not work for tables with multiple FKs pointing to the same PK in another table.
 - `memory_arena` module does not support allocations larger than the arena size (5 MB by default).
-- Cannot modify a foreign key, because when doing so the referenced primary key get's also modified.
 - if the driver is opened on the same database more than once, and the schema changes in one of the instances, the other instance will not be aware of the change.
+- The driver cannot handle adding or changing any constraint.
+- The driver cannot handle database views.
+- FKs are not actually FKs but just references, so the referencial integrity contraints are not enforced (if you set a FK value that is not correct, so long and thank for all
+  fish).
 
 ## Known Bugs
+
+- when you modify a FK with `ln -s target linkpath.vfs2db.lnk`, it works but it tells you that the command failed.
 
 ## License
 

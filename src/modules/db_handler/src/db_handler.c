@@ -440,8 +440,6 @@ cleanup:
 }
 
 status_t is_attribute_null(struct tokens* toks, bool* is_null) {
-    ensure_arena_init();
-
     LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
 
     status_t      status = STATUS_OK;
@@ -450,7 +448,8 @@ status_t is_attribute_null(struct tokens* toks, bool* is_null) {
     // Build the statement to check if the specified attribute value is NULL for the given record in
     // the specified table, using the QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL template.
     TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL,
-                                                         toks->attribute, toks->table),
+                                                         toks->attribute, toks->attribute,
+                                                         toks->table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for checking if attribute is NULL: '%s/%s/%s'",
                  toks->table, toks->record, toks->attribute);
@@ -743,6 +742,88 @@ status_t update_fk_value(struct tokens* toks_linkpath, const char* fk_record) {
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t update_fk_value_by_target(const char* source_table, const char* source_record,
+                                   const char* source_attr, const char* target_table,
+                                   const char* target_attr, const char* target_record) {
+    ensure_arena_init();
+
+    LOG_TRACE("Updating FK by target: %s -> %s/%s with value %s", source_table, target_table,
+              target_attr, target_record);
+
+    status_t status = STATUS_OK;
+
+    // Find the schema for the source table
+    Schema* schema = NULL;
+    TRY_NOT_NULL(schema = find_schema_by_name(db_schema, source_table), cleanup, STATUS_DB_ERROR,
+                 "Source table '%s' not found in schema", source_table);
+
+    // Find the FK in the source table that references target_table(target_attr)
+    Fk* matching_fk = NULL;
+    Fk* fk          = NULL;
+    int fk_count    = 0;
+
+    /**
+     * Son
+     * id | name | id_p1 | id_p2
+     *
+     * Parent
+     * id | name
+     *
+     *
+     * son1 = 1 | "Nicola" | 1 | 2
+     * parent1 = 1 | "Isaia"
+     * parent2 = 2 | "Chiara"
+     * parent3 = 3 | "Gaetano"
+     *
+     * ln -sf /parent/3/id.vfs2db /son/1/id_p1.vfs2db
+     * matching_fk = id_p2
+     */
+
+    HASH_FOREACH(fk, schema->fks_head) {
+        if (strcmp(fk->table, target_table) == 0 && strcmp(fk->to, target_attr) == 0 &&
+            strcmp(fk->from, source_attr) == 0) {
+            matching_fk = fk;
+            fk_count++;
+        }
+    }
+
+    LOG_TRACE("Fk count: %d", fk_count);
+
+    if (fk_count == 0) {
+        LOG_ERROR("No foreign key found in table '%s' referencing '%s(%s)'", source_table,
+                  target_table, target_attr);
+        status = STATUS_DB_ERROR;
+        goto cleanup;
+    }
+
+    // Just log a warning if multiple FKs match, but proceed with the last one found to allow the
+    // update to succeed.
+    if (fk_count > 1) {
+        LOG_WARN(
+            "Multiple foreign keys found in table '%s' referencing '%s(%s)'. Using last match: %s",
+            source_table, target_table, target_attr, matching_fk->from);
+    }
+
+    // Now update the FK attribute with the new target record
+    struct tokens toks = {
+        .table     = source_table,
+        .record    = source_record,
+        .attribute = matching_fk->from,
+    };
+
+    // if (!toks.table || !toks.record || !toks.attribute) {
+    //     LOG_ERROR("Failed to allocate tokens for FK update");
+    //     status = STATUS_ALLOC_ERROR;
+    //     goto cleanup;
+    // }
+
+    TRY(update_fk_value(&toks, target_record), cleanup, "Failed to update FK value '%s/%s/%s'",
+        source_table, source_record, matching_fk->from);
+
+cleanup:
     return status;
 }
 

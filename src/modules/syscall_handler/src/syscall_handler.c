@@ -1038,37 +1038,67 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
 
 int vfs2db_symlink(const char* target, const char* linkpath) {
     LOG_FUSE_ENTER("symlink", linkpath);
-
     ensure_arena_init();
-
     status_t status = STATUS_OK;
 
     LOG_TRACE("symlink: target=%s, linkpath=%s", target, linkpath);
 
-    int num_slashes = COUNT_CHAR(target, '/');
+    // We extract the last 3 slashes from target_path
+    const char* target_vfs    = target + strlen(target);
+    int         slashes_found = 0;
 
-    // We expect the target to be in the format /table/record/attribute.vfs2db for foreign key
-    // symlinks. We need to extract the table name from the target path to determine which table the
-    // symlink is referencing. The table name is located after the first slash and before the second
-    // slash in the target path.
-    for (int i = 0; i < num_slashes - 2; i++) {
-        target = strchr(target, '/') + 1;
+    while (target_vfs > target && slashes_found < 3) {
+        target_vfs--;
+        if (*target_vfs == '/') {
+            slashes_found++;
+        }
     }
 
-    LOG_DEBUG("symlink: resolved target table name for FK symlink: %s", target);
+    // If there is a leading slash, we skip it to get the relative path within the VFS2DB
+    // filesystem.
+    if (*target_vfs == '/') {
+        target_vfs++;
+    }
 
-    struct tokens* toks_target;
-    TRY_NOT_NULL(toks_target = tokenize_path(target), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to tokenize target'%s'", target);
+    // Same thing for linkpath
+    const char* linkpath_vfs = linkpath + strlen(linkpath);
+    slashes_found            = 0;
 
-    char* linkpath_noext = remove_extension(linkpath);
+    while (linkpath_vfs > linkpath && slashes_found < 3) {
+        linkpath_vfs--;
+        if (*linkpath_vfs == '/') {
+            slashes_found++;
+        }
+    }
 
-    struct tokens* toks_linkpath;
-    TRY_NOT_NULL(toks_linkpath = tokenize_path(linkpath_noext), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to tokenize linkpath '%s'", linkpath);
+    if (*linkpath_vfs == '/') {
+        linkpath_vfs++;
+    }
 
+    // Now we have the relative paths within the VFS2DB filesystem for both the target and the
+    // linkpath. We need to tokenize both paths to get the table, record, and attribute components
+    // for schema lookup and FK update.
+    struct tokens* toks_linkpath = NULL;
+    struct tokens* toks_target   = NULL;
+
+    TRY_NOT_NULL(toks_linkpath = tokenize_path(linkpath_vfs), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to tokenize linkpath");
+    TRY_NOT_NULL(toks_target = tokenize_path(target_vfs), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to tokenize target");
+
+    // We need to remove the .vfs2db extension from the attribute component of both paths to get the
+    // actual attribute names for schema lookup and FK update.
+    // TODO: TRY them
+    toks_linkpath->attribute[strlen(toks_linkpath->attribute) - 4] = 0;
+    toks_linkpath->attribute = remove_extension(toks_linkpath->attribute);
+    toks_target->attribute   = remove_extension(toks_target->attribute);
+
+    LOG_DEBUG("symlink: source=%s/%s, target=%s/%s/%s", toks_linkpath->table, toks_linkpath->record,
+              toks_target->table, toks_target->record, toks_target->attribute);
+
+    // We update the FK value in the database for the linkpath to point to the target.
     TRY(update_fk_value(toks_linkpath, toks_target->record), cleanup,
-        "Failed to update FK value for linkpath '%s'", linkpath);
+        "Failed to update FK value for symlink");
 
 cleanup:
     int code = status_to_errno(status);
@@ -1083,12 +1113,16 @@ int vfs2db_unlink(const char* path) {
 
     status_t status = STATUS_OK;
 
+    char* noext_path;
+    TRY_NOT_NULL(noext_path = remove_extension(path), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to remove extension from path: %s", path);
+
     struct tokens* toks;
-    TRY_NOT_NULL(toks = tokenize_path(path), cleanup, STATUS_ALLOC_ERROR,
+    TRY_NOT_NULL(toks = tokenize_path(noext_path), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to tokenize path '%s'", path);
 
     // Check if path corresponds to a .schema file
-    if (check_dotschema(path)) {
+    if (check_dotschema(noext_path)) {
         // rm /table/.schema/name.TEXT.ATTR.vfs2db
         LOG_TRACE("unlink: deleting .schema entry '%s' in table '%s'", toks->attribute,
                   toks->table);
@@ -1099,8 +1133,13 @@ int vfs2db_unlink(const char* path) {
         TRY_NOT_NULL(schema = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR,
                      "Table not found in schema: %s", toks->table);
 
-        if (!is_fk_in_schema(schema, toks->attribute)) {
-            status = STATUS_ILLEGAL_INSTRUCTION;
+        if (is_fk_in_schema(schema, toks->attribute)) {
+            LOG_TRACE("unlink: unlinking FK '%s' in table '%s'", toks->attribute, toks->table);
+            // Set FK to empty
+            TRY(set_attribute_empty(toks), cleanup, "Failed to set FK attribute to empty for %s",
+                path);
+        } else {
+            status = STATUS_DB_ERROR;
         }
     }
 
@@ -1245,7 +1284,10 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
         }
     }
 
-    char** fk_values = arena_calloc(arena, n_same_fks, sizeof(char*));
+    char** fk_values = NULL;
+    TRY_NOT_NULL(fk_values = arena_calloc(arena, n_same_fks, sizeof(char*)), cleanup,
+                 STATUS_ALLOC_ERROR, "Failed to allocate FK values array for table '%s'",
+                 table->name);
 
     LOG_TRACE("readlink: found %d FKs to table '%s'", n_same_fks, fk->table);
 
@@ -1263,7 +1305,8 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
         TRY(get_attribute_all_bytes(&fk_toks, &value, &size), cleanup,
             "Failed to get FK value for %s.%s", fk_toks.table, fk_toks.attribute);
 
-        fk_values[i] = value;
+        TRY_NOT_NULL(fk_values[i] = arena_strdup(arena, value), cleanup, STATUS_ALLOC_ERROR,
+                     "Failed to duplicate FK value for %s.%s", fk_toks.table, fk_toks.attribute);
         LOG_TRACE("readlink: FK value %s=%s", fks[i]->from, value);
     }
 
