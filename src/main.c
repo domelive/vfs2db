@@ -135,6 +135,7 @@ int main(int argc, char* argv[]) {
         logger_cleanup();
         return 1;
     }
+    sqlite3_busy_timeout(db, 5000);
 
     db_path = realpath(opt.db_path, NULL);
     if (!db_path) {

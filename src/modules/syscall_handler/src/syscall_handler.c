@@ -186,23 +186,6 @@ static inline bool path_exists(struct tokens* toks) {
     return true;
 }
 
-static inline const char* get_sqlitetype_from_int(int sqlite_type) {
-    switch (sqlite_type) {
-    case SQLITE_INTEGER:
-        return "INTEGER";
-    case SQLITE_FLOAT:
-        return "FLOAT";
-    case SQLITE_TEXT:
-        return "TEXT";
-    case SQLITE_BLOB:
-        return "BLOB";
-    case SQLITE_NULL:
-        return "NULL";
-    default:
-        return "UNKNOWN";
-    }
-}
-
 static inline status_t generate_dotschema_content(const char* table, char* content,
                                                   fuse_fill_dir_t filler) {
     if (!table) {
@@ -374,9 +357,6 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
 
 void vfs2db_destroy(void* private_data) {
     LOG_INFO("Shutting down VFS2DB filesystem...");
-
-    qm_cleanup();
-
     if (db) {
         sqlite3_close(db);
         LOG_DEBUG("SQLite database closed");

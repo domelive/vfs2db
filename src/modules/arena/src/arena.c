@@ -81,7 +81,6 @@ void* arena_calloc(Arena* arena, size_t count, size_t size) {
     void* ptr = arena_alloc(arena, count * size);
 
     if (ptr) {
-        LOG_TRACE("arena_calloc: zero-initializing %zu bytes", count * size);
         memset(ptr, 0, count * size);
     }
 
@@ -96,7 +95,6 @@ char* arena_strdup(Arena* arena, const char* str) {
     char*  dup_str = (char*)arena_alloc(arena, len);
 
     if (dup_str) {
-        LOG_TRACE("arena_strdup: duplicating string of length %zu", len - 1);
         memcpy(dup_str, str, len);
         dup_str[len - 1] = '\0'; // Ensure null termination
     }

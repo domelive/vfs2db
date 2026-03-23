@@ -41,6 +41,7 @@
  */
 typedef enum {
     QUERY_SELECT_TABLES_NAME,
+    QUERY_SELECT_TABLE_QUERY_STRING,
 
     QUERY_TPL_SELECT_TABLE_INFO,
     QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL,
@@ -88,11 +89,12 @@ char* qm_get_str(QueryID qid);
  *
  * @brief Retrieves the prepared SQLite statement corresponding to the given QueryID.
  *
+ * @param[in] db Pointer to the SQLite database connection
  * @param[in] qid The QueryID for which to retrieve the prepared statement
  *
  * @return Pointer to the prepared SQLite statement if found, NULL otherwise
  */
-sqlite3_stmt* qm_get_static_query_statement(QueryID qid);
+sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid);
 
 /**
  * Get Dynamic Query Statement
@@ -109,10 +111,18 @@ sqlite3_stmt* qm_get_static_query_statement(QueryID qid);
 sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...);
 
 /**
- * Cleanup Query Manager
+ * Execute Multi-Statement Query
  *
- * @brief Cleans up the Query Manager by finalizing prepared SQL statements.
+ * @brief Prepares and executes a multi-statement SQLite query based on the given QueryID and
+ * parameters. This is used for queries that consist of multiple SQL statements, such as
+ * transactions.
+ *
+ * @param[in] db  Pointer to the SQLite database connection
+ * @param[in] qid The QueryID for which to prepare the multi-statement query
+ * @param[in] ... Variadic arguments to format the SQL query string
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-void qm_cleanup();
+status_t qm_exec_multi_stmt_query(sqlite3* db, QueryID qid, ...);
 
 #endif // QUERY_MANAGER_H

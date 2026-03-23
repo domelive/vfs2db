@@ -474,6 +474,28 @@ static inline void free_schema_hashmap(DbSchema* schema) {
 }
 
 /**
+ * get_sqlitetype_from_int
+ *
+ * @brief Convert SQLite Type Integer to String Representation
+ */
+static inline const char* get_sqlitetype_from_int(int sqlite_type) {
+    switch (sqlite_type) {
+    case SQLITE_INTEGER:
+        return "INTEGER";
+    case SQLITE_FLOAT:
+        return "FLOAT";
+    case SQLITE_TEXT:
+        return "TEXT";
+    case SQLITE_BLOB:
+        return "BLOB";
+    case SQLITE_NULL:
+        return "NULL";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/**
  * count_char_occurrences
  *
  * @brief Count the number of occurrences of a character in a string

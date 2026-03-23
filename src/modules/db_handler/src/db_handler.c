@@ -102,7 +102,7 @@ status_t init_db_schema(DbSchema* db_schema) {
     db_schema->tables_head = NULL;
 
     // Execute the SQL query to retrieve the names of all tables in the database.
-    sqlite3_stmt* pstmt = qm_get_static_query_statement(QUERY_SELECT_TABLES_NAME);
+    sqlite3_stmt* pstmt = qm_get_static_query_statement(db, QUERY_SELECT_TABLES_NAME);
 
     // Iterate over the query results and populate the DbSchema structure with the table names.
     while (sqlite3_step(pstmt) == SQLITE_ROW) {
@@ -128,6 +128,9 @@ status_t init_db_schema(DbSchema* db_schema) {
     LOG_INFO("Database schema initialized: %d tables found.", count_schemas(db_schema));
 
 cleanup:
+    if (pstmt) {
+        sqlite3_finalize(pstmt);
+    }
     return status;
 }
 
@@ -270,9 +273,40 @@ status_t init_schema(Schema* schema) {
     LOG_DEBUG("Schema '%s' initialized: %d PKs, %d FKs, %d attrs", schema->name, pk_count, fk_count,
               attr_count);
 
+    // Select sql table string
+    sqlite3_stmt* static_stmt;
+    TRY_NOT_NULL(static_stmt = qm_get_static_query_statement(db, QUERY_SELECT_TABLE_QUERY_STRING),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to get static query statement for table query string: '%s'", schema->name);
+
+    LOG_TRACE("Static query for table query string retrieved");
+
+    // Bind the table name to the query
+    TRY_SQLITE(sqlite3_bind_text(static_stmt, 1, schema->name, -1, SQLITE_TRANSIENT), SQLITE_OK,
+               cleanup, "Failed to bind table name for table query string: '%s'", schema->name);
+
+    LOG_TRACE("Static query for table query string binded");
+
+    TRY_SQLITE(sqlite3_step(static_stmt), SQLITE_ROW, cleanup,
+               "Failed to execute query for table query string for '%s'", schema->name);
+
+    LOG_TRACE("Static query for table query string executed");
+
+    // Retrieve the SQL query string for the table from the query result and store it in the Schema
+    const char* query_string;
+    TRY_NOT_NULL(query_string = (const char*)sqlite3_column_text(static_stmt, 0), cleanup,
+                 STATUS_DB_ERROR, "Failed to retrieve query string for table '%s'", schema->name);
+    TRY_NOT_NULL(schema->sql = strdup(query_string), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate query string for table '%s'", schema->name);
+
+    LOG_TRACE("Retrieved SQL query string for table '%s': %s", schema->name, schema->sql);
+
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
+    if (static_stmt) {
+        sqlite3_finalize(static_stmt);
+    }
     return status;
 }
 
@@ -745,88 +779,6 @@ cleanup:
     return status;
 }
 
-status_t update_fk_value_by_target(const char* source_table, const char* source_record,
-                                   const char* source_attr, const char* target_table,
-                                   const char* target_attr, const char* target_record) {
-    ensure_arena_init();
-
-    LOG_TRACE("Updating FK by target: %s -> %s/%s with value %s", source_table, target_table,
-              target_attr, target_record);
-
-    status_t status = STATUS_OK;
-
-    // Find the schema for the source table
-    Schema* schema = NULL;
-    TRY_NOT_NULL(schema = find_schema_by_name(db_schema, source_table), cleanup, STATUS_DB_ERROR,
-                 "Source table '%s' not found in schema", source_table);
-
-    // Find the FK in the source table that references target_table(target_attr)
-    Fk* matching_fk = NULL;
-    Fk* fk          = NULL;
-    int fk_count    = 0;
-
-    /**
-     * Son
-     * id | name | id_p1 | id_p2
-     *
-     * Parent
-     * id | name
-     *
-     *
-     * son1 = 1 | "Nicola" | 1 | 2
-     * parent1 = 1 | "Isaia"
-     * parent2 = 2 | "Chiara"
-     * parent3 = 3 | "Gaetano"
-     *
-     * ln -sf /parent/3/id.vfs2db /son/1/id_p1.vfs2db
-     * matching_fk = id_p2
-     */
-
-    HASH_FOREACH(fk, schema->fks_head) {
-        if (strcmp(fk->table, target_table) == 0 && strcmp(fk->to, target_attr) == 0 &&
-            strcmp(fk->from, source_attr) == 0) {
-            matching_fk = fk;
-            fk_count++;
-        }
-    }
-
-    LOG_TRACE("Fk count: %d", fk_count);
-
-    if (fk_count == 0) {
-        LOG_ERROR("No foreign key found in table '%s' referencing '%s(%s)'", source_table,
-                  target_table, target_attr);
-        status = STATUS_DB_ERROR;
-        goto cleanup;
-    }
-
-    // Just log a warning if multiple FKs match, but proceed with the last one found to allow the
-    // update to succeed.
-    if (fk_count > 1) {
-        LOG_WARN(
-            "Multiple foreign keys found in table '%s' referencing '%s(%s)'. Using last match: %s",
-            source_table, target_table, target_attr, matching_fk->from);
-    }
-
-    // Now update the FK attribute with the new target record
-    struct tokens toks = {
-        .table     = source_table,
-        .record    = source_record,
-        .attribute = matching_fk->from,
-    };
-
-    // if (!toks.table || !toks.record || !toks.attribute) {
-    //     LOG_ERROR("Failed to allocate tokens for FK update");
-    //     status = STATUS_ALLOC_ERROR;
-    //     goto cleanup;
-    // }
-
-    TRY(update_fk_value(&toks, target_record), cleanup, "Failed to update FK value '%s/%s/%s'",
-        source_table, source_record, matching_fk->from);
-
-cleanup:
-    return status;
-}
-
 status_t set_attribute_empty(struct tokens* toks) {
     ensure_arena_init();
 
@@ -998,6 +950,39 @@ cleanup:
     return status;
 }
 
+static inline status_t update_schema_sql(Schema* schema) {
+    status_t status = STATUS_OK;
+
+    TRY_NOT_NULL(schema, cleanup, STATUS_ISNULL, "Schema is NULL for updating schema SQL");
+
+    sqlite3_stmt* stmt = NULL;
+    TRY_NOT_NULL(stmt = qm_get_static_query_statement(db, QUERY_SELECT_TABLE_QUERY_STRING), cleanup,
+                 STATUS_DB_ERROR, "Failed to get static query statement for updating schema SQL");
+
+    TRY_SQLITE(sqlite3_bind_text(stmt, 1, schema->name, -1, SQLITE_TRANSIENT), SQLITE_OK, cleanup,
+               "Failed to bind table name '%s' to query statement", schema->name);
+
+    TRY_SQLITE(sqlite3_step(stmt), SQLITE_ROW, cleanup,
+               "Failed to execute query statement for updating schema SQL for table '%s'",
+               schema->name);
+
+    char* sql = (char*)sqlite3_column_text(stmt, 0);
+    if (sql) {
+        free(schema->sql);
+        TRY_NOT_NULL(schema->sql = strdup(sql), cleanup, STATUS_ALLOC_ERROR,
+                     "Failed to duplicate SQL string for table '%s'", schema->name);
+    } else {
+        LOG_ERROR("Failed to retrieve SQL from query result for table '%s'", schema->name);
+        status = STATUS_DB_ERROR;
+    }
+
+cleanup:
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
+    return status;
+}
+
 status_t create_empty_table(const char* table) {
     LOG_TRACE("Creating empty table: %s", table);
 
@@ -1043,6 +1028,7 @@ status_t create_empty_table(const char* table) {
     // to ensure that our in-memory representation of the database schema is consistent with the
     // actual state of the database after creating the new table.
     add_pk_to_schema(new_schema, new_pk);
+    update_schema_sql(new_schema);
     add_schema(db_schema, new_schema);
     LOG_DEBUG("mkdir: schema for table '%s' created with PK 'rowid'", table);
 
@@ -1089,6 +1075,7 @@ status_t delete_schema_column(struct tokens* toks) {
     remove_attribute_from_schema(table_schema, ds_toks->column_name);
     remove_pk_from_schema(table_schema, ds_toks->column_name);
     remove_fk_from_schema(table_schema, ds_toks->column_name);
+    update_schema_sql(table_schema);
     LOG_DEBUG("Schema updated to remove attribute '%s' from table '%s'", ds_toks->column_name,
               toks->table);
 
@@ -1133,6 +1120,7 @@ status_t add_pk_to_table(const char* table, const char* pk_name, const char* pk_
     new_pk->sqlite_type = parse_sqlite_type(pk_type);
 
     add_pk_to_schema(table_schema, new_pk);
+    update_schema_sql(table_schema);
 
     LOG_DEBUG("PK '%s' added to schema for table '%s'", pk_name, table);
 
@@ -1178,6 +1166,7 @@ status_t add_attribute_to_table(const char* table, const char* attr_name, const 
     new_attr->sqlite_type = parse_sqlite_type(attr_type);
 
     add_attribute_to_schema(table_schema, new_attr);
+    update_schema_sql(table_schema);
 
     LOG_DEBUG("Attribute '%s' added to schema for table '%s'", attr_name, table);
 
@@ -1189,30 +1178,60 @@ cleanup:
 
 status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_table,
                          const char* fk_to) {
-    ensure_arena_init();
     LOG_TRACE("Adding FK %s to table %s referencing %s(%s)", fk_from, table, fk_table, fk_to);
+    ensure_arena_init();
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
-    // Build the dynamic query statement to add a primary key column to the specified table using
-    // ALTER TABLE new_table ADD chart_id REFERENCES chart(id)
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(db, QUERY_TPL_ADD_FOREIGN_KEY_COLUMN,
-                                                         table, fk_from, fk_table, fk_to),
-                 cleanup, STATUS_DB_ERROR,
-                 "Failed to build query statement for adding FK column '%s' to table '%s'", fk_from,
-                 table);
-
-    // Execute the ALTER TABLE statement to add the new primary key column to the database table.
-    TRY_SQLITE(sqlite3_step(stmt), SQLITE_DONE, cleanup,
-               "Failed to execute query for adding FK column '%s' to table '%s'", fk_from, table);
-
-    // Update the schema in-memory representation to include the new primary key for the specified
-    // table
+    // Get the table schema
     Schema* table_schema;
     TRY_NOT_NULL(table_schema = find_schema_by_name(db_schema, table), cleanup, STATUS_DB_ERROR,
                  "Table '%s' not found in schema for adding FK", table);
 
+    // Get the referenced table schema to find the type of the referenced PK
+    Schema* ref_table_schema;
+    TRY_NOT_NULL(ref_table_schema = find_schema_by_name(db_schema, fk_table), cleanup,
+                 STATUS_DB_ERROR,
+                 "Referenced table '%s' not found in schema for adding FK '%s' to table '%s'",
+                 fk_table, fk_from, table);
+
+    Pk* ref_pk;
+    TRY_NOT_NULL(ref_pk = find_pk_by_name(ref_table_schema, fk_to), cleanup, STATUS_DB_ERROR,
+                 "Referenced PK '%s' not found in schema for adding FK '%s' to table '%s'", fk_to,
+                 fk_from, table);
+
+    // Build the new sql create query
+    char* end_sql;
+    TRY_NOT_NULL(end_sql = arena_strdup(arena, table_schema->sql), cleanup, STATUS_DB_ERROR,
+                 "Failed to find closing parenthesis in SQL for table '%s' when adding FK '%s'",
+                 table, fk_from);
+
+    end_sql[strlen(table_schema->sql) - 1] = '\0'; // remove trailing );
+
+    char* new_table_sql;
+    TRY_NOT_NULL(new_table_sql = arena_calloc(arena, 1, strlen(end_sql) + 1024), cleanup,
+                 STATUS_ALLOC_ERROR, "Failed to allocate new SQL for adding FK '%s' to table '%s'",
+                 fk_from, table);
+
+    snprintf(new_table_sql, strlen(end_sql) + 1024,
+             "%s, %s %s, FOREIGN KEY(%s) REFERENCES %s(%s));", end_sql, fk_from,
+             get_sqlitetype_from_int(ref_pk->sqlite_type), fk_from, fk_table, fk_to);
+
+    LOG_TRACE("New SQL for table '%s' with added FK: %s", table, new_table_sql);
+
+    TRY(qm_exec_multi_stmt_query(db, QUERY_TPL_ADD_FOREIGN_KEY_COLUMN, table, table, new_table_sql,
+                                 table, table, table),
+        cleanup, "Failed to build query statement for adding FK column '%s' to table '%s'", fk_from,
+        table);
+
+    // Print the SQL query stmt
+    char* stmt_sql = sqlite3_expanded_sql(stmt);
+    LOG_TRACE("Built SQL for adding FK: %s", stmt_sql);
+    sqlite3_free(stmt_sql);
+
+    // Update the schema in-memory representation to include the new primary key for the specified
+    // table
     Fk* new_fk;
     TRY_NOT_NULL(new_fk = malloc(sizeof(Fk)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate FK for new FK '%s' in table '%s'", fk_from, table);
@@ -1226,21 +1245,12 @@ status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_
     TRY_NOT_NULL(new_fk->to = strdup(fk_to), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate name for new FK '%s' in table '%s'", fk_to, table);
 
-    Schema* ref_table_schema;
-    TRY_NOT_NULL(ref_table_schema = find_schema_by_name(db_schema, fk_table), cleanup,
-                 STATUS_DB_ERROR,
-                 "Referenced table '%s' not found in schema for adding FK '%s' to table '%s'",
-                 fk_table, fk_from, table);
-
-    Pk* ref_pk;
-    TRY_NOT_NULL(ref_pk = find_pk_by_name(ref_table_schema, fk_to), cleanup, STATUS_DB_ERROR,
-                 "Referenced PK '%s' not found in schema for adding FK '%s' to table '%s'", fk_to,
-                 fk_from, table);
-
     new_fk->sqlite_type = ref_pk->sqlite_type;
 
     add_fk_to_schema(table_schema, new_fk);
+    update_schema_sql(table_schema);
 
+    LOG_TRACE("Updated SQL for table '%s': %s", table, table_schema->sql);
     LOG_DEBUG("FK '%s' added to schema for table '%s'", fk_from, table);
 
 cleanup:

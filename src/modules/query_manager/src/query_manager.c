@@ -34,8 +34,8 @@
  * - `stmt`:       Pointer to a prepared SQLite statement (if applicable).
  */
 typedef struct query_t {
-    const char*   sql;
-    int           is_dynamic;
+    const char* sql;
+    int type; // 0 for static, 1 for dynamic, 2 for multiple statement queries like transactions;
     sqlite3_stmt* stmt;
 } query_t;
 
@@ -47,6 +47,14 @@ static query_t query_store[] = {
                                   "WHERE "
                                   "type='table' AND name NOT LIKE 'sqlite_%';",
                                   0, NULL},
+
+    [QUERY_SELECT_TABLE_QUERY_STRING] = {"SELECT "
+                                         "sql "
+                                         "FROM "
+                                         "sqlite_master "
+                                         "WHERE "
+                                         "type='table' AND name = ?;",
+                                         0, NULL},
 
     [QUERY_TPL_SELECT_TABLE_INFO] = {"SELECT "
                                      "ti.name AS column_name,"
@@ -63,7 +71,7 @@ static query_t query_store[] = {
                                      1, NULL},
 
     [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
-                                            "%s IS NULL OR %s = ''"
+                                            "%s IS NULL OR %s = '' "
                                             "FROM "
                                             "%s "
                                             "WHERE "
@@ -150,11 +158,15 @@ static query_t query_store[] = {
                                         "%s %s",
                                         1, NULL},
 
-    [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"ALTER TABLE "
+    [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"PRAGMA foreign_keys=off; "
+                                          "BEGIN TRANSACTION; "
+                                          "ALTER TABLE %s RENAME TO %s_old; "
                                           "%s "
-                                          "ADD COLUMN "
-                                          "%s REFERENCES %s(%s)",
-                                          1, NULL},
+                                          "INSERT INTO %s SELECT *, '' FROM %s_old; "
+                                          "DROP TABLE %s_old; "
+                                          "COMMIT; "
+                                          "PRAGMA foreign_keys=on;",
+                                          2, NULL},
 };
 
 status_t qm_init(sqlite3* db) {
@@ -167,14 +179,14 @@ status_t qm_init(sqlite3* db) {
     // Dynamic queries will be prepared on demand when requested, so they are not prepared at
     // initialization.
     for (int i = 0; i < QUERY_COUNT; i++) {
-        if (!query_store[i].is_dynamic) {
-            LOG_TRACE("Preparing static query %d: %.50s...", i, query_store[i].sql);
+        if (!query_store[i].type) {
+            // LOG_TRACE("Preparing static query %d: %.50s...", i, query_store[i].sql);
 
-            int rc = sqlite3_prepare_v2(db, query_store[i].sql, -1, &query_store[i].stmt, NULL);
-            if (rc != SQLITE_OK) {
-                LOG_ERROR("Failed to prepare static query %d: %s", i, sqlite3_errmsg(db));
-                return STATUS_DB_ERROR;
-            }
+            // int rc = sqlite3_prepare_v2(db, query_store[i].sql, -1, &query_store[i].stmt, NULL);
+            // if (rc != SQLITE_OK) {
+            //     LOG_ERROR("Failed to prepare static query %d: %s", i, sqlite3_errmsg(db));
+            //     return STATUS_DB_ERROR;
+            // }
             static_count++;
         } else {
             dynamic_count++;
@@ -196,7 +208,9 @@ char* qm_get_str(QueryID qid) {
     return (char*)query_store[qid].sql;
 }
 
-sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
+sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid) {
+    LOG_TRACE("Retrieving static statement for QueryID %d", qid);
+
     if (qid < 0 || qid >= QUERY_COUNT) {
         LOG_ERROR("Invalid QueryID: %d", qid);
         return NULL;
@@ -204,18 +218,26 @@ sqlite3_stmt* qm_get_static_query_statement(QueryID qid) {
 
     // Static queries should have their statements prepared at initialization and stored in the
     // query store. If the query is dynamic, it should not be retrieved using this function.
-    if (query_store[qid].is_dynamic) {
+    if (query_store[qid].type != 0) {
         LOG_ERROR("QueryID %d is dynamic, use qm_build_dynamic_query_statement", qid);
         return NULL;
     }
 
+    if (sqlite3_prepare_v2(db, query_store[qid].sql, -1, &query_store[qid].stmt, NULL) !=
+        SQLITE_OK) {
+        LOG_ERROR("Failed to prepare static statement for QueryID %d: %s", qid,
+                  sqlite3_errmsg(NULL));
+        return NULL;
+    }
+
+    LOG_TRACE("Static statement for QueryID %d prepared successfully", qid);
     sqlite3_stmt* s = query_store[qid].stmt;
 
     // Reset the statement to clear any previous bindings and state before returning it for use.
     // This ensures that the statement is in a clean state when retrieved for execution, preventing
     // issues from previous executions from affecting the current use of the statement.
-    sqlite3_reset(s);
-    sqlite3_clear_bindings(s);
+    // sqlite3_reset(s);
+    // sqlite3_clear_bindings(s);
 
     LOG_TRACE("Retrieved static statement for QueryID %d", qid);
 
@@ -228,7 +250,7 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
         return NULL;
     }
 
-    if (!query_store[qid].is_dynamic) {
+    if (query_store[qid].type != 1) {
         LOG_ERROR("QueryID %d is static, use qm_get_static_query_statement", qid);
         return NULL;
     }
@@ -257,17 +279,32 @@ sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
     return s;
 }
 
-void qm_cleanup() {
-    LOG_DEBUG("Cleaning up Query Manager...");
+status_t qm_exec_multi_stmt_query(sqlite3* db, QueryID qid, ...) {
+    status_t status = STATUS_OK;
 
-    int finalized = 0;
-    for (int i = 0; i < QUERY_COUNT; i++) {
-        if (query_store[i].stmt) {
-            sqlite3_finalize(query_store[i].stmt);
-            query_store[i].stmt = NULL;
-            finalized++;
-        }
+    if (qid < 0 || qid >= QUERY_COUNT) {
+        LOG_ERROR("Invalid QueryID: %d", qid);
+        status = STATUS_ILLEGAL_INSTRUCTION;
     }
 
-    LOG_INFO("Query Manager cleanup complete: %d statements finalized", finalized);
+    if (query_store[qid].type != 2) {
+        LOG_ERROR("QueryID %d is not a multi-statement query", qid);
+        status = STATUS_ILLEGAL_INSTRUCTION;
+    }
+
+    const char* tpl = query_store[qid].sql;
+    char        buffer[4096];
+
+    va_list args;
+    va_start(args, qid);
+    vsnprintf(buffer, sizeof(buffer), tpl, args);
+    va_end(args);
+
+    LOG_TRACE("Built multi-statement query: %s", buffer);
+
+    TRY_SQLITE(sqlite3_exec(db, buffer, NULL, NULL, NULL), SQLITE_OK, cleanup,
+               "Failed to execute multi-statement query %d: %s", qid, sqlite3_errmsg(db));
+
+cleanup:
+    return status;
 }

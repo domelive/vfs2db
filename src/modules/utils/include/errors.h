@@ -41,6 +41,7 @@ typedef enum status_t {
     STATUS_ISNULL,
 
     STATUS_ILLEGAL_INSTRUCTION,
+    STATUS_INVALID_ARGUMENT,
     STATUS_INVALID_PATH,
     STATUS_ALLOC_ERROR,
 
@@ -104,6 +105,8 @@ static inline int status_to_errno(status_t status) {
         return 0;
     case STATUS_ILLEGAL_INSTRUCTION:
         return -ENOSYS;
+    case STATUS_INVALID_ARGUMENT:
+        return -EINVAL;
     case STATUS_INVALID_PATH:
         return -ENOENT;
     case STATUS_DB_BUSY:

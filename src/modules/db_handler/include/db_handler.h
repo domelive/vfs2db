@@ -223,24 +223,6 @@ status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t 
 status_t update_fk_value(struct tokens* toks_linkpath, const char* fk_record);
 
 /**
- * Update Foreign Key by Target Reference
- *
- * @brief Updates a foreign key in a source table by finding which FK points to the target.
- *        This method is robust against FUSE temporary filenames.
- *
- * @param[in] source_table   The table containing the FK to update
- * @param[in] source_record  The record (rowid) in source_table to update
- * @param[in] target_table   The table being referenced by the FK
- * @param[in] target_attr    The attribute in target_table being referenced
- * @param[in] target_record  The record (rowid) in target_table to reference
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
-status_t update_fk_value_by_target(const char* source_table, const char* source_record,
-                                   const char* source_attr, const char* target_table,
-                                   const char* target_attr, const char* target_record);
-
-/**
  * Set Attribute to NULL
  *
  * @brief Sets a specific attribute value to NULL for a given record in a table.

@@ -432,6 +432,7 @@ fusermount3 -u /tmp/test
 ## Known Bugs
 
 - when you modify a FK with `ln -s target linkpath.vfs2db.lnk`, it works but it tells you that the command failed.
+- Fow now you can only add one foreign key constraint.
 
 ## License
 

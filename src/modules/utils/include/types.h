@@ -104,6 +104,7 @@ typedef struct Fk {
  */
 typedef struct Schema {
     char* name;
+    char* sql;
 
     Pk*   pk_head;
     Attr* attr_head;
