@@ -119,13 +119,13 @@ static inline char* remove_extension(const char* path) {
     return noext_path;
 }
 
-static inline status_t check_symlink(struct tokens* toks, bool* is_symlink) {
+static inline status_t check_symlink(Vfs2DbContext* ctx, struct tokens* toks, bool* is_symlink) {
     status_t status = STATUS_OK;
 
     *is_symlink = false;
 
     bool is_null = false;
-    TRY(is_attribute_null(toks, &is_null), cleanup,
+    TRY(is_attribute_null(ctx, toks, &is_null), cleanup,
         "Failed to check if attribute is NULL for %s/%s/%s", toks->table, toks->record,
         toks->attribute);
 
@@ -141,7 +141,7 @@ static inline status_t check_symlink(struct tokens* toks, bool* is_symlink) {
 
     // Check if table exists in schema
     Schema* table;
-    TRY_NOT_NULL(table = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR,
+    TRY_NOT_NULL(table = find_schema_by_name(ctx->db_schema, toks->table), cleanup, STATUS_DB_ERROR,
                  "Table '%s' not found in schema for symlink check", toks->table);
 
     // Check if attribute is a foreign key in the table schema
@@ -155,10 +155,10 @@ cleanup:
     return status;
 }
 
-static inline bool path_exists(struct tokens* toks) {
+static inline bool path_exists(Vfs2DbContext* ctx, struct tokens* toks) {
     if (toks->table) {
         // Check if table exists in schema
-        Schema* table = find_schema_by_name(db_schema, toks->table);
+        Schema* table = find_schema_by_name(ctx->db_schema, toks->table);
         if (!table) {
             LOG_WARN("Table not found in schema: %s", toks->table);
             return false;
@@ -166,7 +166,7 @@ static inline bool path_exists(struct tokens* toks) {
 
         // If record is specified, check if it exists
         if (toks->record) {
-            if (record_exists(toks) != STATUS_OK) {
+            if (record_exists(ctx, toks) != STATUS_OK) {
                 LOG_WARN("Record '%s' not found in table '%s'", toks->record, toks->table);
                 return false;
             }
@@ -186,14 +186,14 @@ static inline bool path_exists(struct tokens* toks) {
     return true;
 }
 
-static inline status_t generate_dotschema_content(const char* table, char* content,
-                                                  fuse_fill_dir_t filler) {
+static inline status_t generate_dotschema_content(Vfs2DbContext* ctx, const char* table,
+                                                  char* content, fuse_fill_dir_t filler) {
     if (!table) {
         LOG_WARN("generate_dotschema_content called with NULL table name");
         return STATUS_ISNULL;
     }
 
-    Schema* table_schema = find_schema_by_name(db_schema, table);
+    Schema* table_schema = find_schema_by_name(ctx->db_schema, table);
     if (!table_schema) {
         LOG_WARN("Table not found in schema: %s", table);
         return STATUS_DB_NOTFOUND;
@@ -238,7 +238,7 @@ static inline status_t generate_dotschema_content(const char* table, char* conte
     return STATUS_OK;
 }
 
-static inline bool check_dotschema(const char* path) {
+static inline bool check_dotschema(Vfs2DbContext* ctx, const char* path) {
     LOG_TRACE("Checking if path is a .schema directory: %s", path);
 
     struct tokens* toks = tokenize_path(path);
@@ -248,7 +248,7 @@ static inline bool check_dotschema(const char* path) {
     }
 
     if (toks->table) {
-        Schema* table = find_schema_by_name(db_schema, toks->table);
+        Schema* table = find_schema_by_name(ctx->db_schema, toks->table);
         if (!table) {
             LOG_WARN("Table not found in schema: %s", toks->table);
             return false;
@@ -268,7 +268,7 @@ static inline bool check_dotschema(const char* path) {
     return false;
 }
 
-static inline bool check_column_exists_in_dotschema(const char* path) {
+static inline bool check_column_exists_in_dotschema(Vfs2DbContext* ctx, const char* path) {
     LOG_TRACE("Checking if path corresponds to a column in a .schema directory: %s", path);
     struct tokens* toks = tokenize_path(path);
     if (!toks) {
@@ -277,7 +277,7 @@ static inline bool check_column_exists_in_dotschema(const char* path) {
     }
 
     if (toks->table) {
-        Schema* table = find_schema_by_name(db_schema, toks->table);
+        Schema* table = find_schema_by_name(ctx->db_schema, toks->table);
         if (!table) {
             LOG_WARN("Table not found in schema: %s", toks->table);
             return false;
@@ -303,39 +303,45 @@ static inline bool check_column_exists_in_dotschema(const char* path) {
 void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     LOG_INFO("Initializing VFS2DB filesystem...");
 
+    status_t status = STATUS_OK;
+
     // Get database path from FUSE private data
-    const char* db_path = (const char*)fuse_get_context()->private_data;
-    if (!db_path) {
+    Vfs2DbContext* ctx = (Vfs2DbContext*)fuse_get_context()->private_data;
+    if (!ctx->db_path) {
         LOG_FATAL("Database path not provided in FUSE private data");
         return NULL;
     }
 
     // Initialize query manager
-    if (qm_init(db) != STATUS_OK) {
+    if (qm_init(ctx->db_conn) != STATUS_OK) {
         LOG_FATAL("Failed to initialize Query Manager");
         return NULL;
     }
 
     // Load database schema
-    db_schema = malloc(sizeof(DbSchema));
-    if (!db_schema) {
-        LOG_FATAL("Failed to allocate DbSchema");
-        return NULL;
+    TRY_NOT_NULL(ctx->db_schema = malloc(sizeof(DbSchema)), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to allocate DbSchema");
+
+    // Set pragma foreign_keys=ON if the context says so
+    if (ctx->foreign_keys_on) {
+        LOG_INFO("Enabling SQLite foreign key support (PRAGMA foreign_keys=ON)");
+        TRY(set_sqlite_pragma(ctx, "foreign_keys", "ON"), cleanup,
+            "Failed to set SQLite pragma foreign_keys=ON");
     }
 
     // Initialize the schema structure
-    if (init_db_schema(db_schema) != STATUS_OK) {
+    if (init_db_schema(ctx) != STATUS_OK) {
         LOG_FATAL("Failed to initialize database schema");
-        free(db_schema);
-        db_schema = NULL;
+        free(ctx->db_schema);
+        ctx->db_schema = NULL;
         return NULL;
     }
-    LOG_INFO("Found %d tables in database", count_schemas(db_schema));
+    LOG_INFO("Found %d tables in database", count_schemas(ctx->db_schema));
 
     // For each table, get all the info
-    HASH_FOREACH(current_schema, db_schema->tables_head) {
+    HASH_FOREACH(current_schema, ctx->db_schema->tables_head) {
         LOG_DEBUG("Loading schema for table: %s", current_schema->name);
-        if (init_schema(current_schema) != STATUS_OK) {
+        if (init_schema(ctx, current_schema) != STATUS_OK) {
             LOG_ERROR("Failed to init schema for table: %s", current_schema->name);
         }
     }
@@ -343,7 +349,7 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
     // Log schema summary at debug level
     if (logger_get_level() <= LOG_LEVEL_DEBUG) {
         LOG_DEBUG("=== Database Schema Summary ===");
-        HASH_FOREACH(current_schema, db_schema->tables_head) {
+        HASH_FOREACH(current_schema, ctx->db_schema->tables_head) {
             LOG_DEBUG("Table: %s (PKs=%d, FKs=%d, Attrs=%d)", current_schema->name,
                       count_pks(current_schema), count_fks(current_schema),
                       count_attributes(current_schema));
@@ -351,29 +357,40 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
         LOG_DEBUG("===============================");
     }
 
+    LOG_TRACE("Vfs2dbContext:");
+    LOG_TRACE("  db_conn: %p", (void*)ctx->db_conn);
+    LOG_TRACE("  db_schema: %p", (void*)ctx->db_schema);
+    LOG_TRACE("  db_path: %s", ctx->db_path);
+    LOG_TRACE("  foreign_keys_on: %s", ctx->foreign_keys_on ? "true" : "false");
+
     LOG_INFO("=== VFS2DB initialization complete ===");
-    return NULL;
+
+cleanup:
+    return ctx;
 }
 
 void vfs2db_destroy(void* private_data) {
     LOG_INFO("Shutting down VFS2DB filesystem...");
-    if (db) {
-        sqlite3_close(db);
+
+    Vfs2DbContext* ctx = (Vfs2DbContext*)private_data;
+
+    if (ctx->db_conn) {
+        sqlite3_close(ctx->db_conn);
         LOG_DEBUG("SQLite database closed");
-        db = NULL;
+        ctx->db_conn = NULL;
     }
 
-    if (db_schema) {
-        HASH_FOREACH(current_schema, db_schema->tables_head) {
+    if (ctx->db_schema) {
+        HASH_FOREACH(current_schema, ctx->db_schema->tables_head) {
             LOG_TRACE("Freeing schema: %s", current_schema->name);
             free_attr_set(current_schema);
             free_pk_set(current_schema);
             free_fk_hashmap(current_schema);
             free(current_schema->name);
         }
-        free_schema_hashmap(db_schema);
-        free(db_schema);
-        db_schema = NULL;
+        free_schema_hashmap(ctx->db_schema);
+        free(ctx->db_schema);
+        ctx->db_schema = NULL;
         LOG_DEBUG("Database schema freed");
     }
 
@@ -393,19 +410,24 @@ void vfs2db_destroy(void* private_data) {
 
 int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi) {
     (void)fi;
+    LOG_FUSE_ENTER("getattr", path);
 
     ensure_arena_init();
 
-    LOG_FUSE_ENTER("getattr", path);
-
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
+    if (!ctx) {
+        LOG_ERROR("FUSE context private data is NULL in getattr");
+        LOG_FUSE_EXIT("getattr", -EFAULT);
+        return -EFAULT;
+    }
 
     // Initialize the stat structure to zero to avoid returning uninitialized values for fields we
     // don't set.
     memset(st, 0, sizeof(*st));
 
     struct stat time_st;
-    if (stat(db_path, &time_st) != 0) {
+    if (stat(ctx->db_path, &time_st) != 0) {
         LOG_ERROR("Failed to stat database file for time attributes: %s", strerror(errno));
         goto cleanup;
     }
@@ -422,7 +444,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
         // entry in readdir and generate its content dynamically when the client tries to read it.
         // The actual content of the .schema file will be generated in the read handler based on the
         // database schema.
-        if (check_dotschema(path)) {
+        if (check_dotschema(ctx, path)) {
             LOG_TRACE("getattr: %s is a .schema directory", path);
             st->st_mode  = S_IFDIR | 0755;
             st->st_nlink = 2;
@@ -443,7 +465,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
                 return -ENOMEM;
             }
 
-            if (!path_exists(toks)) {
+            if (!path_exists(ctx, toks)) {
                 LOG_WARN("Path does not exist: %s", path);
                 LOG_FUSE_EXIT("getattr", -ENOENT);
                 return -ENOENT;
@@ -461,7 +483,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
     // If path ends with .vfs2db, it's a file (either regular or symlink)
     else {
         // We should check if the file is in a .schema directory
-        if (check_dotschema(path) && check_column_exists_in_dotschema(path)) {
+        if (check_dotschema(ctx, path) && check_column_exists_in_dotschema(ctx, path)) {
             LOG_TRACE("getattr: %s is a file in a .schema directory", path);
             st->st_mode  = S_IFREG | 0644;
             st->st_nlink = 1;
@@ -484,7 +506,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             TRY_NOT_NULL(toks = tokenize_path(noext_path), cleanup, STATUS_ALLOC_ERROR,
                          "Failed to tokenize path: %s", path);
 
-            if (!path_exists(toks)) {
+            if (!path_exists(ctx, toks)) {
                 LOG_WARN("Path does not exist: %s", path);
                 LOG_FUSE_EXIT("getattr", -ENOENT);
                 return -ENOENT;
@@ -492,7 +514,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
 
             // We will treat foreign keys as symlinks and attributes as regular files.
             bool is_symlink;
-            TRY(check_symlink(toks, &is_symlink), cleanup,
+            TRY(check_symlink(ctx, toks, &is_symlink), cleanup,
                 "Failed to check if attribute is a symlink for %s", path);
 
             if (is_symlink) {
@@ -512,7 +534,7 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
             }
 
             size_t attr_size;
-            TRY(get_attribute_size(toks, &attr_size), cleanup,
+            TRY(get_attribute_size(ctx, toks, &attr_size), cleanup,
                 "Failed to get attribute size for %s", path);
 
             st->st_size = attr_size;
@@ -532,7 +554,8 @@ int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size
 
     LOG_FUSE_ENTER("getxattr", path);
 
-    status_t status = STATUS_OK;
+    int            attr_type;
+    Vfs2DbContext* ctx = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     LOG_TRACE("getxattr: name=%s, bufsize=%zu", name, size);
 
@@ -556,45 +579,23 @@ int vfs2db_getxattr(const char* path, const char* name, char* value, size_t size
         return -ENOMEM;
     }
 
-    const char* t_str;
-    int         attr_type;
-
     // Get attribute type from database schema to determine the value of user.type extended
     // attribute. This is used to provide type information about the attribute file in the VFS2DB
     // filesystem, which can be useful for clients to understand the type of data they are working
     // with when reading from or writing to the file.
-    if (get_attribute_type(toks, &attr_type) != STATUS_OK) {
+    if (get_attribute_type(ctx, toks, &attr_type) != STATUS_OK) {
         LOG_ERROR("getxattr: failed to get attribute type for %s", path);
         return -EIO;
     }
 
     // Map SQLite type to string representation for user.type extended attribute.
-    switch (attr_type) {
-    case SQLITE_TEXT:
-        t_str = "TEXT";
-        break;
-    case SQLITE_INTEGER:
-        t_str = "INTEGER";
-        break;
-    case SQLITE_FLOAT:
-        t_str = "FLOAT";
-        break;
-    case SQLITE_BLOB:
-        t_str = "BLOB";
-        break;
-    case SQLITE_NULL:
-        t_str = "NULL";
-        break;
-    default:
-        t_str = "UNDEFINED";
-        break;
-    }
-
+    const char* t_str = get_sqlitetype_from_int(attr_type);
     LOG_DEBUG("getxattr: user.type=%s for %s", t_str, path);
 
     // Return size or copy data
     if (size == 0)
         return strlen(t_str);
+
     if (size < strlen(t_str))
         return -ERANGE;
 
@@ -615,6 +616,7 @@ int vfs2db_setxattr(const char* path, const char* name, const char* value, size_
 
     LOG_WARN("setxattr is not supported in VFS2DB, extended attributes are read-only");
     LOG_FUSE_EXIT("setxattr", 0);
+
     return 0;
 }
 
@@ -624,7 +626,9 @@ int vfs2db_utimens(const char* path, const struct timespec tv[2], struct fuse_fi
 
     LOG_FUSE_ENTER("utimens", path);
 
-    if (!check_column_exists_in_dotschema(path)) {
+    Vfs2DbContext* ctx = (Vfs2DbContext*)fuse_get_context()->private_data;
+
+    if (!check_column_exists_in_dotschema(ctx, path)) {
         LOG_WARN("Path does not exist: %s", path);
         LOG_FUSE_EXIT("utimens", -ENOENT);
         return -ENOENT;
@@ -645,7 +649,8 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
 
     LOG_FUSE_ENTER("readdir", path);
 
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     // Add current and parent directory entries. This is required for proper directory navigation.
     filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
@@ -685,7 +690,7 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
         int count = 0;
 
         // List all tables in the database schema as directory entries.
-        HASH_FOREACH(current_schema, db_schema->tables_head) {
+        HASH_FOREACH(current_schema, ctx->db_schema->tables_head) {
             filler(buffer, current_schema->name, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
             count++;
         }
@@ -703,7 +708,7 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
         int   n_records;
 
         // Get all record rowids for the specified table from the database.
-        TRY(get_table_rowids(toks->table, record_list, &n_records), cleanup,
+        TRY(get_table_rowids(ctx, toks->table, record_list, &n_records), cleanup,
             "Failed to get rowids for table '%s'", toks->table);
 
         // Add each record as a directory entry. The record names are derived from their rowids,
@@ -719,21 +724,22 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     case 2: {
         // We need to check if we are in a record directory or a .schema directory.
         // ls /table/3/ should list attributes, while ls /table/.schema/ should list schema columns.
-        if (check_dotschema(path)) {
+        if (check_dotschema(ctx, path)) {
             LOG_TRACE("readdir: listing .schema content for table '%s'", toks->table);
-            generate_dotschema_content(toks->table, buffer, filler);
+            generate_dotschema_content(ctx, toks->table, buffer, filler);
         } else {
             LOG_DEBUG("readdir: listing attributes for %s/%s", toks->table, toks->record);
 
             // Check if /table/record/ exists
-            TRY(record_exists(toks), cleanup, "Record not found: %s/%s", toks->table, toks->record);
+            TRY(record_exists(ctx, toks), cleanup, "Record not found: %s/%s", toks->table,
+                toks->record);
 
             Schema* table;
 
             // Look up the table schema for the specified table to get information about its
             // attributes, primary keys, and foreign keys, which will be listed as files in the
             // directory.
-            TRY_NOT_NULL(table = find_schema_by_name(db_schema, toks->table), cleanup,
+            TRY_NOT_NULL(table = find_schema_by_name(ctx->db_schema, toks->table), cleanup,
                          STATUS_DB_ERROR, "Table not found in schema: %s", toks->table);
 
             char file[MAX_SIZE];
@@ -783,7 +789,8 @@ int vfs2db_mkdir(const char* path, mode_t mode) {
 
     LOG_FUSE_ENTER("mkdir", path);
 
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     struct tokens* toks;
     TRY_NOT_NULL(toks = tokenize_path(path), cleanup, STATUS_ALLOC_ERROR,
@@ -791,12 +798,13 @@ int vfs2db_mkdir(const char* path, mode_t mode) {
 
     // if path is like `/table` we have to create a new table.
     if (toks->table && !toks->record && !toks->attribute) {
-        TRY(create_empty_table(toks->table), cleanup, "Failed to create table '%s'", toks->table);
+        TRY(create_empty_table(ctx, toks->table), cleanup, "Failed to create table '%s'",
+            toks->table);
         LOG_DEBUG("mkdir: table '%s' created", toks->table);
     }
     // if path is like `/table/record` we have to create a new record in the specified table.
     else if (toks->table && toks->record && !toks->attribute) {
-        TRY(insert_record_into_table(toks), cleanup, "Failed to insert record into table '%s'",
+        TRY(insert_record_into_table(ctx, toks), cleanup, "Failed to insert record into table '%s'",
             toks->table);
         LOG_DEBUG("mkdir: record '%s' created in table '%s'", toks->record, toks->table);
     }
@@ -817,14 +825,15 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
 
     LOG_FUSE_ENTER("create", path);
 
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     struct tokens* toks;
     TRY_NOT_NULL(toks = tokenize_path(path), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to tokenize path '%s'", path);
 
     // Check if path corresponds to a .schema file
-    if (check_dotschema(path)) {
+    if (check_dotschema(ctx, path)) {
         // touch /table/.schema/name.TEXT.ATTR.vfs2db
         LOG_TRACE("Creating .schema entry for table '%s', attribute '%s'", toks->table,
                   toks->attribute);
@@ -843,13 +852,14 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
 
         // Case PK
         if (strncmp(ds_toks->column_spec, "PK", 2) == 0) {
-            TRY(add_pk_to_table(toks->table, ds_toks->column_name, ds_toks->column_type), cleanup,
-                "Failed to add PK column '%s' of type '%s' to table '%s'", ds_toks->column_name,
-                ds_toks->column_type, toks->table);
+            TRY(add_pk_to_table(ctx, toks->table, ds_toks->column_name, ds_toks->column_type),
+                cleanup, "Failed to add PK column '%s' of type '%s' to table '%s'",
+                ds_toks->column_name, ds_toks->column_type, toks->table);
         }
         // Case ATTR
         else if (strncmp(ds_toks->column_spec, "ATTR", 4) == 0) {
-            TRY(add_attribute_to_table(toks->table, ds_toks->column_name, ds_toks->column_type),
+            TRY(add_attribute_to_table(ctx, toks->table, ds_toks->column_name,
+                                       ds_toks->column_type),
                 cleanup, "Failed to add attribute column '%s' of type '%s' to table '%s'",
                 ds_toks->column_name, ds_toks->column_type, toks->table);
         }
@@ -862,7 +872,7 @@ int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
             LOG_TRACE("Adding FK column '%s' referencing '%s(%s)' to table '%s'",
                       ds_toks->column_name, fk_table, fk_to, toks->table);
 
-            TRY(add_fk_to_table(toks->table, ds_toks->column_name, fk_table, fk_to), cleanup,
+            TRY(add_fk_to_table(ctx, toks->table, ds_toks->column_name, fk_table, fk_to), cleanup,
                 "Failed to add FK column '%s' of type '%s' to table '%s'", ds_toks->column_name,
                 ds_toks->column_type, toks->table);
         }
@@ -914,6 +924,7 @@ int vfs2db_open(const char* path, struct fuse_file_info* fi) {
 
     int flags = fi->flags;
     LOG_TRACE("open: flags=0x%x", flags);
+
     // We need to know ALL flags that are ON:
     // Pls do it
     LOG_TRACE("open: O_RDONLY=%d, O_WRONLY=%d, O_RDWR=%d, O_CREAT=%d, O_EXCL=%d, O_NOCTTY=%d, "
@@ -953,6 +964,8 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
 
     ensure_arena_init();
 
+    Vfs2DbContext* ctx = (Vfs2DbContext*)fuse_get_context()->private_data;
+
     LOG_TRACE("read: size=%zu, offset=%ld", size, offset);
 
     // Remove extension and tokenize path to get table, record, and attribute for schema
@@ -971,7 +984,7 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     }
 
     // If any component is missing, we will treat it as a non-existent file.
-    if (!path_exists(toks)) {
+    if (!path_exists(ctx, toks)) {
         LOG_WARN("Path does not exist: %s", path);
         LOG_FUSE_EXIT("read", -ENOENT);
         return -ENOENT;
@@ -983,7 +996,7 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     // Get the total size of the attribute value from the database to determine how many
     // bytes we can read from the specified offset. This is necessary to handle cases
     // where the read request goes beyond the end of the attribute value.
-    if (get_attribute_size(toks, &total_size) == STATUS_DB_ERROR) {
+    if (get_attribute_size(ctx, toks, &total_size) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute size");
         LOG_FUSE_EXIT("read", -EIO);
         return -EIO;
@@ -1004,7 +1017,7 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
     size_t bytes_to_copy = MIN(size, total_size - offset);
 
     // Get the attribute value bytes from the database for the specified offset.
-    if (get_attribute_chunk_bytes(toks, offset, &buffer, bytes_to_copy) == STATUS_DB_ERROR) {
+    if (get_attribute_chunk_bytes(ctx, toks, offset, &buffer, bytes_to_copy) == STATUS_DB_ERROR) {
         LOG_ERROR("read: failed to get attribute bytes");
         LOG_FUSE_EXIT("read", -EIO);
         return -EIO;
@@ -1018,8 +1031,11 @@ int vfs2db_read(const char* path, char* buffer, size_t size, off_t offset,
 
 int vfs2db_symlink(const char* target, const char* linkpath) {
     LOG_FUSE_ENTER("symlink", linkpath);
+
     ensure_arena_init();
-    status_t status = STATUS_OK;
+
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     LOG_TRACE("symlink: target=%s, linkpath=%s", target, linkpath);
 
@@ -1077,7 +1093,7 @@ int vfs2db_symlink(const char* target, const char* linkpath) {
               toks_target->table, toks_target->record, toks_target->attribute);
 
     // We update the FK value in the database for the linkpath to point to the target.
-    TRY(update_fk_value(toks_linkpath, toks_target->record), cleanup,
+    TRY(update_fk_value(ctx, toks_linkpath, toks_target), cleanup,
         "Failed to update FK value for symlink");
 
 cleanup:
@@ -1091,7 +1107,8 @@ int vfs2db_unlink(const char* path) {
 
     LOG_FUSE_ENTER("unlink", path);
 
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     char* noext_path;
     TRY_NOT_NULL(noext_path = remove_extension(path), cleanup, STATUS_ALLOC_ERROR,
@@ -1102,22 +1119,22 @@ int vfs2db_unlink(const char* path) {
                  "Failed to tokenize path '%s'", path);
 
     // Check if path corresponds to a .schema file
-    if (check_dotschema(noext_path)) {
+    if (check_dotschema(ctx, noext_path)) {
         // rm /table/.schema/name.TEXT.ATTR.vfs2db
         LOG_TRACE("unlink: deleting .schema entry '%s' in table '%s'", toks->attribute,
                   toks->table);
-        TRY(delete_schema_column(toks), cleanup,
+        TRY(delete_schema_column(ctx, toks), cleanup,
             "Failed to delete .schema entry '%s' in table '%s'", toks->attribute, toks->table);
     } else {
         Schema* schema = NULL;
-        TRY_NOT_NULL(schema = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR,
-                     "Table not found in schema: %s", toks->table);
+        TRY_NOT_NULL(schema = find_schema_by_name(ctx->db_schema, toks->table), cleanup,
+                     STATUS_DB_ERROR, "Table not found in schema: %s", toks->table);
 
         if (is_fk_in_schema(schema, toks->attribute)) {
             LOG_TRACE("unlink: unlinking FK '%s' in table '%s'", toks->attribute, toks->table);
             // Set FK to empty
-            TRY(set_attribute_empty(toks), cleanup, "Failed to set FK attribute to empty for %s",
-                path);
+            TRY(set_attribute_empty(ctx, toks), cleanup,
+                "Failed to set FK attribute to empty for %s", path);
         } else {
             status = STATUS_DB_ERROR;
         }
@@ -1138,6 +1155,8 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
 
     ensure_arena_init();
 
+    Vfs2DbContext* ctx = (Vfs2DbContext*)fuse_get_context()->private_data;
+
     // Remove extension and tokenize path to get table, record, and attribute for schema
     // lookup.
     char* noext_path = remove_extension(path);
@@ -1155,7 +1174,7 @@ int vfs2db_write(const char* path, const char* buffer, size_t size, off_t offset
 
     // Update the attribute value in the database with the new data from the buffer at
     // the specified offset.
-    if (update_attribute_value(toks, buffer, size, offset) == STATUS_DB_ERROR) {
+    if (update_attribute_value(ctx, toks, buffer, size, offset) == STATUS_DB_ERROR) {
         LOG_ERROR("write: failed to update attribute");
         LOG_FUSE_EXIT("write", -EIO);
         return -EIO;
@@ -1172,7 +1191,8 @@ int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
 
     ensure_arena_init();
 
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     // Remove extension and tokenize path to get table, record, and attribute for schema
     // lookup.
@@ -1192,7 +1212,8 @@ int vfs2db_truncate(const char* path, off_t size, struct fuse_file_info* fi) {
     // Truncation to zero size is supported by setting the attribute value to NULL in
     // the database.
     if (size == 0) {
-        TRY(set_attribute_empty(toks), cleanup, "Failed to set attribute to NULL for %s", path);
+        TRY(set_attribute_empty(ctx, toks), cleanup, "Failed to set attribute to NULL for %s",
+            path);
     } else {
         LOG_WARN("truncate: truncation to non-zero size is not supported, setting "
                  "attribute to "
@@ -1210,7 +1231,8 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
     ensure_arena_init();
 
-    status_t status = STATUS_OK;
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
 
     // Remove extension and tokenize path to get table, record, and attribute for schema
     // lookup.
@@ -1230,7 +1252,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     // Look up the table schema for the specified table to get information about its
     // foreign keys, which will be used to determine the target of the symbolic link.
     Schema* table;
-    TRY_NOT_NULL(table = find_schema_by_name(db_schema, toks->table), cleanup, STATUS_DB_ERROR,
+    TRY_NOT_NULL(table = find_schema_by_name(ctx->db_schema, toks->table), cleanup, STATUS_DB_ERROR,
                  "Table not found in schema: %s", toks->table);
 
     // Look up the foreign key definition for the specified attribute to get the target
@@ -1282,7 +1304,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
         // Get the value of the FK attribute from the database for the specified record
         // to use in resolving the link target.
-        TRY(get_attribute_all_bytes(&fk_toks, &value, &size), cleanup,
+        TRY(get_attribute_all_bytes(ctx, &fk_toks, &value, &size), cleanup,
             "Failed to get FK value for %s.%s", fk_toks.table, fk_toks.attribute);
 
         TRY_NOT_NULL(fk_values[i] = arena_strdup(arena, value), cleanup, STATUS_ALLOC_ERROR,
@@ -1294,7 +1316,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
     // Resolve the rowid of the target record in the target table based on the values of
     // the FKs that point to the same target table.
-    TRY(get_rowid_from_pks(fk->table, fks, fk_values, n_same_fks, &row_id), cleanup,
+    TRY(get_rowid_from_pks(ctx, fk->table, fks, fk_values, n_same_fks, &row_id), cleanup,
         "Failed to resolve FK target for %s.%s", toks->table, toks->attribute);
 
     LOG_DEBUG("readlink: resolved to %s/%d/%s", fk->table, row_id, fk->to);

@@ -132,6 +132,31 @@ typedef struct DbSchema {
 } DbSchema;
 
 // =============================================================
+// Context Structures
+// =============================================================
+
+/**
+ * @brief Structure representing the context for the VFS2DB filesystem.
+ *
+ * Includes the following fields:
+ * - `db_conn`: Pointer to the SQLite database connection.
+ * - `db_schema`: Pointer to the in-memory representation of the database schema.
+ * - `db_path`: The file path to the SQLite database.
+ * - `foreign_keys_on`: Flag indicating whether foreign key constraints are enabled in the database.
+ *
+ * @note All string fields are dynamically allocated and should be freed appropriately to avoid
+ * memory leaks.
+ */
+typedef struct Vfs2DbContext {
+    sqlite3*  db_conn;
+    DbSchema* db_schema;
+
+    const char* db_path;
+
+    bool foreign_keys_on;
+} Vfs2DbContext;
+
+// =============================================================
 // Other Structures
 // =============================================================
 

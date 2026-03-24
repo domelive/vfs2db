@@ -26,10 +26,12 @@
 #include "logger.h"
 #include "syscall_handler.h"
 
-sqlite3*  db            = NULL; /**< Database connection handle */
-DbSchema* db_schema     = NULL; /**< Database schema structure */
-int       cache_enabled = 1;    /**< Flag to enable or disable caching (default: enabled) */
-char*     db_path       = NULL;
+Vfs2DbContext ctx = {
+    .db_conn         = NULL,
+    .db_schema       = NULL,
+    .db_path         = NULL,
+    .foreign_keys_on = false,
+};
 
 /**
  * @brief FUSE operations structure mapping filesystem calls to handler functions.
@@ -68,6 +70,7 @@ struct options {
     const char* db_path;
     const char* log_level;
     const char* log_file;
+    bool        foreign_keys_on;
 };
 
 /**
@@ -77,8 +80,9 @@ struct options {
  * The "db=%s" option allows the user to specify the path to the database file.
  */
 #define OPTION(t, p) {t, offsetof(struct options, p), 1}
-static const struct fuse_opt option_spec[] = {OPTION("db=%s", db_path), OPTION("log=%s", log_level),
-                                              OPTION("logfile=%s", log_file), FUSE_OPT_END};
+static const struct fuse_opt option_spec[] = {
+    OPTION("db=%s", db_path), OPTION("log=%s", log_level), OPTION("logfile=%s", log_file),
+    OPTION("foreign_keys=%s", foreign_keys_on), FUSE_OPT_END};
 
 int main(int argc, char* argv[]) {
     if (logger_init_default() != 0) {
@@ -90,7 +94,7 @@ int main(int argc, char* argv[]) {
     LOG_INFO("Version 0.0.2");
 
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct options   opt  = {NULL, NULL, NULL, 1};
+    struct options   opt  = {NULL, NULL, NULL, false};
 
     // Parse command-line options
     if (fuse_opt_parse(&args, &opt, option_spec, NULL) == -1) {
@@ -118,6 +122,8 @@ int main(int argc, char* argv[]) {
         LOG_INFO("Usage: %s -o db=<path> [mount_point]", argv[0]);
         LOG_INFO("Options:");
         LOG_INFO("  -o db=<path>       Path to SQLite database (required)");
+        LOG_INFO("  -o foreign_keys_on=<true|false>  Enable or disable SQLite foreign key "
+                 "constraints (default: false)");
         LOG_INFO("  -o log=<level>     Log level: trace,debug,info,warn,error,fatal");
         LOG_INFO("  -o logfile=<path>  Log to file in addition to stderr");
 
@@ -128,26 +134,28 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO("Opening SQLite database...: %s", opt.db_path);
 
-    int check = sqlite3_open_v2(opt.db_path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    int check = sqlite3_open_v2(opt.db_path, &ctx.db_conn,
+                                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
     if (check != SQLITE_OK) {
-        LOG_FATAL("Cannot open database: %s", sqlite3_errmsg(db));
+        LOG_FATAL("Cannot open database: %s", sqlite3_errmsg(ctx.db_conn));
         fuse_opt_free_args(&args);
         logger_cleanup();
         return 1;
     }
-    sqlite3_busy_timeout(db, 5000);
+    //  sqlite3_busy_timeout(db, 5000);
 
-    db_path = realpath(opt.db_path, NULL);
-    if (!db_path) {
+    ctx.db_path = realpath(opt.db_path, NULL);
+    if (!ctx.db_path) {
         LOG_FATAL("Resolution of relative path of %s failed", opt.db_path);
         fuse_opt_free_args(&args);
         logger_cleanup();
         return 1;
     }
 
-    LOG_INFO("Database path: %s", db_path);
+    LOG_INFO("Database with path %s opened successfully", ctx.db_path);
 
-    LOG_INFO("Database opened successfully");
+    // Initialize foreign key constraints based on command-line option
+    ctx.foreign_keys_on = opt.foreign_keys_on;
 
     LOG_INFO("Mounting FUSE filesystem...");
     LOG_DEBUG("FUSE arguments: argc=%d", args.argc);
@@ -155,7 +163,7 @@ int main(int argc, char* argv[]) {
         LOG_TRACE("  argv[%d]: %s", i, args.argv[i]);
     }
 
-    int res = fuse_main(args.argc, args.argv, &vfs2db_oper, opt.db_path);
+    int res = fuse_main(args.argc, args.argv, &vfs2db_oper, &ctx);
 
     LOG_INFO("FUSE main loop has exited with code: %d", res);
     LOG_INFO("Unmounting FUSE filesystem...");

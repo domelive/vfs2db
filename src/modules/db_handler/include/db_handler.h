@@ -42,232 +42,271 @@
 #include "query_manager.h"
 #include "types.h"
 
-extern sqlite3*  db;
-extern DbSchema* db_schema;
+/**
+ * Set SQLite PRAGMA
+ *
+ * @brief Sets a SQLite PRAGMA option to the specified value.
+ *
+ * This function constructs and executes a SQL query to set the given PRAGMA option
+ * to the specified value in the SQLite database. It is used to configure various aspects of the
+ * database behavior, such as enabling foreign key constraints or adjusting performance settings.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] pragma The name of the PRAGMA option to set (e.g., "foreign_keys")
+ * @param[in] value The value to set for the PRAGMA option (e.g., "ON" or "OFF")
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
+ */
+status_t set_sqlite_pragma(Vfs2DbContext* ctx, const char* pragma, const char* value);
 
 /**
  * Initialize Database Schema
  *
- * @brief Initializes the DbSchema structure by retrieving table names
- *        from the database.
+ * @brief Initializes the database schema by retrieving the names of all tables in the database
+ * and populating the DbSchema structure with this information.
  *
- * This function populates the provided DbSchema structure with
- * the names of all tables present in the database.
+ * This function executes a SQL query to fetch the table names and creates a Schema structure for
+ * each table, which is then added to the DbSchema's hash map of tables.
  *
- * Uses the following SQL query:
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
  *
- * - `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';`
- *
- * Where `sqlite_master` is a special table that has the following columns: `| type | name |
- * tbl_name | rootpage | sql |`
- *
- * @param[out] db_schema Pointer to DbSchema structure to initialize
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t init_db_schema(DbSchema* db_schema);
+status_t init_db_schema(Vfs2DbContext* ctx);
 
 /**
- * Initialize Schema Structure
+ * Initialize Schema
  *
- * @brief Initializes the Schema structure by retrieving table information
- *        from the database using `PRAGMA` statements.
+ * @brief Initializes the schema for a specific table by retrieving column information and
+ * populating the Schema structure with details about primary keys, attributes, and foreign keys.
  *
- * This function populates the provided Schema structure with
- * information about the table's columns, primary keys, and foreign keys.
+ * This function executes a SQL query to fetch column information for the specified table and
+ * processes the results to fill the Schema structure accordingly.
  *
- * Uses the following `PRAGMA` statements:
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
+ * @param[in,out] schema Pointer to the Schema structure to be initialized with column information
  *
- * - `PRAGMA table_info(table_name)`: column informations `| cid | name | type | notnull |
- * dflt_value | pk |`
- *
- * - `PRAGMA foreign_key_list(table_name)`: foreign key informations `| id | seq | table | from | to
- * | on_update | on_delete | match |`
- *
- * @param[out] schema Pointer to Schema structure to initialize
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t init_schema(Schema* schema);
+status_t init_schema(Vfs2DbContext* ctx, Schema* schema);
 
 /**
  * Record Exists
  *
- * @brief Checks if a record exists in the database based on the provided tokens.
+ * @brief Checks if a specific record exists in a given table by executing a SQL query that
+ * searches for the record based on its row ID.
  *
- * This function executes a SQL query to check for the existence of a record in the specified table
- * that matches the given record identifier. It returns STATUS_OK if the record exists, or an
- * appropriate error status if it does not exist or if there is a database error.
+ * This function returns STATUS_OK if the record exists, or an appropriate error status if it does
+ * not exist or if there is a database error.
  *
- * @param[in] toks Pointer to tokens structure containing table and record information
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to a tokens structure containing the table name and record identifier
  *
- * @return STATUS_OK if the record exists, STATUS_DB_ERROR if there is a database error, or
- * STATUS_DB_NOTFOUND if the record does not exist
+ * @return STATUS_OK if the record exists, or an appropriate error status on failure
  */
-status_t record_exists(struct tokens* toks);
+status_t record_exists(Vfs2DbContext* ctx, struct tokens* toks);
 
 /**
  * Get Attribute All Bytes
  *
- * @brief Retrieves the entire value of a specific attribute for a given record in a table as a byte
- * array.
+ * @brief Retrieves the entire byte content of a specific attribute value for a given record in a
+ * table.
  *
- * This function executes a SQL query to fetch the attribute value from the database and returns it
- * as a byte array along with its size. The caller is responsible for freeing the allocated byte
- * array.
+ * This function executes a SQL query to fetch the attribute value as a blob and returns the
+ * data along with its size in bytes. The retrieved data is duplicated into a thread-local arena for
+ * efficient memory management.
  *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
- * @param[out] bytes Pointer to a char pointer where the allocated byte array will be stored
- * @param[out] size Pointer to a size_t variable where the size of the retrieved byte array will be
- * stored
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name
+ * @param[out] bytes Pointer to a char pointer where the retrieved attribute bytes will be stored
+ * @param[out] size Pointer to a size_t variable where the size of the retrieved attribute data in
+ * bytes will be stored
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_all_bytes(struct tokens* toks, char** bytes, size_t* size);
+status_t get_attribute_all_bytes(Vfs2DbContext* ctx, struct tokens* toks, char** bytes,
+                                 size_t* size);
 
 /**
  * Get Attribute Size
  *
- * @brief Retrieves the size (in bytes) of a specific attribute value
- *        for a given record in a table.
+ * @brief Retrieves the size in bytes of a specific attribute value for a given record in a table.
  *
- * This function executes a SQL query to fetch the attribute value
- * and calculates its size in bytes.
+ * This function executes a SQL query to calculate the size of the attribute value and returns it
+ * through the `size` output parameter.
  *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name
+ * @param[in] offset Byte offset within the attribute value from which to start retrieving data
+ * (used for chunked reads)
+ * @param[out] bytes Pointer to a char pointer where the retrieved attribute bytes will be stored
+ * (used for chunked reads)
+ * @param[in] size Pointer to a size_t variable where the size of the attribute data in bytes will
+ * be stored
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_chunk_bytes(struct tokens* toks, off_t offset, char** bytes, size_t size);
+status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, struct tokens* toks, off_t offset,
+                                   char** bytes, size_t size);
 
 /**
  * Is Attribute NULL
  *
- * @brief Checks if a specific attribute value is NULL for a given record in a table.
+ * @brief Checks if a specific attribute value for a given record in a table is NULL.
  *
- * This function executes a SQL query to determine if the specified attribute value
- * is NULL in the database and returns the result through the `is_null` output parameter.
+ * This function executes a SQL query to determine if the attribute value is NULL and returns the
+ * result through the `is_null` output parameter.
  *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
- * @param[out] is_null Pointer to an integer where the result will be stored (1 if NULL, 0 if not
- * NULL)
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name
+ * @param[out] is_null Pointer to a boolean variable where the result will be stored (true if the
+ * attribute value is NULL, false otherwise)
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t is_attribute_null(struct tokens* toks, bool* is_null);
+status_t is_attribute_null(Vfs2DbContext* ctx, struct tokens* toks, bool* is_null);
 
 /**
  * Get Attribute Type
  *
- * @brief Retrieves the SQLite data type of a specific attribute value
- *        for a given record in a table.
+ * @brief Retrieves the SQLite data type of a specific attribute for a given record in a table.
  *
- * This function executes a SQL query to fetch the attribute value
- * and determines its SQLite data type (e.g., INTEGER, TEXT, BLOB).
+ * This function checks the database schema to determine if the attribute is a foreign key, primary
+ * key, or normal attribute, and returns the corresponding SQLite data type through the `type`
+ * output parameter.
  *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name
+ * @param[out] size Pointer to an integer variable where the SQLite data type of the attribute will
+ * be stored
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_size(struct tokens* toks, size_t* size);
+status_t get_attribute_size(Vfs2DbContext* ctx, struct tokens* toks, size_t* size);
 
 /**
- * Update Attribute Value
+ * Get Attribute Type
  *
- * @brief Updates a specific attribute value for a given record in a table.
+ * @brief Retrieves the SQLite data type of a specific attribute for a given record in a table.
  *
- * This function performs the following steps:
- * 1. Evicts the corresponding cache block if it exists.
- * 2. Reads the existing attribute value from the database.
- * 3. Patches the existing value with the new data at the specified offset.
- * 4. Writes the updated value back to the database.
+ * This function checks the database schema to determine if the attribute is a foreign key, primary
+ * key, or normal attribute, and returns the corresponding SQLite data type through the `type`
+ * output parameter.
  *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute information
- * @param[in] buffer Pointer to the new data to write
- * @param[in] size Size of the new data in bytes
- * @param[in] offset Byte offset within the attribute value where the update should begin
- * @param[in] attr_size Total size of the attribute value in bytes (before update)
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name
+ * @param[out] type Pointer to an integer variable where the SQLite data type of the attribute will
+ * be stored
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_type(struct tokens* toks, int* type);
+status_t get_attribute_type(Vfs2DbContext* ctx, struct tokens* toks, int* type);
+
+/**
+ * Bind Attribute Value
+ *
+ * @brief Binds a specific attribute value to a prepared SQLite statement based on the attribute's
+ * SQLite data type.
+ *
+ * This function converts the string representation of the attribute value to the
+ * appropriate data type (e.g., integer, float, text) and binds it to the provided SQLite statement
+ * using the correct sqlite3_bind_* function.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name
+ * @param[in] buffer Pointer to the buffer containing the new attribute value to be bound to the
+ * statement
+ * @param[in] size Size of the buffer in bytes
+ * @param[in] offset Byte offset within the attribute value from which to start binding data (
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
+ */
+status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const char* buffer,
+                                size_t size, off_t offset);
+
+/**
+ * Update Foreign Key Value
+ *
+ * @brief Updates the value of a foreign key attribute for a given record in a table.
+ *
+ * This function constructs and executes a SQL query to update the foreign key value based on the
+ * provided link path tokens and the new foreign key record value.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks_linkpath Pointer to a tokens structure containing the table name, record
+ * identifier, and foreign key attribute name for the link path
+ * @param[in] toks_target Pointer to a tokens structure containing the table name, record
+ * identifier, and foreign key attribute name for the target
+
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
+ */
+status_t update_fk_value(Vfs2DbContext* ctx, struct tokens* toks_linkpath,
+                         struct tokens* toks_target);
+
+/**
+ * Set Attribute Empty
+ *
+ * @brief Sets the value of a specific attribute for a given record in a table to an empty value.
+ *
+ * This function constructs and executes a SQL query to update the attribute value to an empty
+ * string or zero value based on the attribute's SQLite data type.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name for which the value should be set to empty
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
+ */
+status_t set_attribute_empty(Vfs2DbContext* ctx, struct tokens* toks);
 
 /**
  * Get Table Row IDs
  *
  * @brief Retrieves the row IDs of all records in a specified table.
  *
- * This function executes a SQL query to fetch the row IDs of all records
- * in the specified table and returns them as an array of strings.
+ * This function executes a SQL query to fetch the row IDs of all records in the given table and
+ * returns them through the `records` output parameter, along with the total number of records
+ * through the `n_records` output parameter.
  *
- * @param[in] table Name of the table to query
- * @param[out] records Array of strings where the row IDs will be stored
- * @param[out] n_records Pointer to an integer where the number of records will be stored
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] table Name of the table for which to retrieve the row IDs
+ * @param[out] records Pointer to an array of char pointers where the retrieved row IDs will be
+ * stored
+ * @param[out] n_records Pointer to an integer variable where the total number of records in the
+ * table will be stored
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t update_attribute_value(struct tokens* toks, const char* buffer, size_t size, off_t offset);
-
-/**
- * Update Foreign Key Value
- *
- * @brief Updates a foreign key attribute value for a given record in a table.
- *
- * This function constructs and executes a SQL query to update the specified foreign key attribute
- * value for the given record in the source table. It is used to maintain referential integrity
- * when the target of a foreign key relationship changes.
- *
- * @param[in] toks_linkpath Pointer to tokens structure containing table, record, and attribute
- * information for the source of the foreign key to update
- * @param[in] fk_record The new record value to set for the foreign key attribute
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
-status_t update_fk_value(struct tokens* toks_linkpath, const char* fk_record);
-
-/**
- * Set Attribute to NULL
- *
- * @brief Sets a specific attribute value to NULL for a given record in a table.
- *
- * This function executes a SQL query to update the specified attribute value
- * to NULL in the database. It also evicts the corresponding cache block if it exists.
- *
- * @param[in] toks Pointer to tokens structure containing table, record, and attribute
- * information
- */
-status_t set_attribute_empty(struct tokens* toks);
+status_t get_table_rowids(Vfs2DbContext* ctx, const char* table, char* records[], int* n_records);
 
 /**
  * Get Row ID from Primary Keys
  *
- * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
- * This function constructs and executes a SQL query to find the row ID of a record
- * that matches the specified primary key values.
+ * @brief Retrieves the row ID of a specific record in a table based on its primary key values.
  *
- * @param[in] table Name of the table to query
- * @param[in] fks Array of pointers to Fk structures containing primary key names and values
- * @param[in] fks_values Array of strings containing the corresponding primary key values
- * @param[in] num_fks Number of primary keys provided in the fks array
- * @param[out] row_id Pointer to an integer where the retrieved row ID will be stored if found
+ * This function constructs and executes a SQL query to find the row ID of a record in the specified
+ * table that matches the provided primary key values. The primary key values are passed as an array
+ * of Fk structures and their corresponding string values.
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] table Name of the table to search for the record
+ * @param[in] fks Array of Fk structures representing the primary key columns of the table
+ * @param[in] fks_values Array of string values corresponding to the primary key columns
+ * @param[in] num_fks Number of primary key columns (size of the fks and fks_values arrays)
+ * @param[out] row_id Pointer to an integer variable where the retrieved row ID will be stored if a
+ * matching record is found
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_table_rowids(const char* table, char* records[], int* n_records);
-
-/**
- * Get Row ID from Primary Keys
- *
- * @brief Retrieves the row ID of a record in a table based on the provided primary key values.
- *
- * This function constructs and executes a SQL query to find the row ID of a record
- * that matches the specified primary key values.
- *
- * @param[in] table Name of the table to query
- * @param[in] fks Array of pointers to Fk structures containing primary key names and values
- * @param[in] fks_values Array of strings containing the corresponding primary key values
- * @param[in] num_fks Number of primary keys provided in the fks array
- * @param[out] row_id Pointer to an integer where the retrieved row ID will be stored if found
- */
-status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], int num_fks,
-                            int* row_id);
+status_t get_rowid_from_pks(Vfs2DbContext* ctx, const char* table, Fk* fks[], char* fks_values[],
+                            int num_fks, int* row_id);
 
 /**
  * Insert Record into Table
@@ -277,12 +316,12 @@ status_t get_rowid_from_pks(const char* table, Fk* fks[], char* fks_values[], in
  * This function constructs and executes a SQL query to insert a new record
  * with the specified row ID into the given table.
  *
- * @param[in] table Name of the table to insert into
- * @param[in] row_id Row ID for the new record to be inserted
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to tokens structure containing table and record information
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t insert_record_into_table(struct tokens* toks);
+status_t insert_record_into_table(Vfs2DbContext* ctx, struct tokens* toks);
 
 /**
  * Create Empty Table
@@ -294,75 +333,92 @@ status_t insert_record_into_table(struct tokens* toks);
  * This function constructs and executes a SQL query to create the new table if it does not
  * already exist in the database.
  *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
  * @param[in] table Name of the table to create
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t create_empty_table(const char* table);
+status_t create_empty_table(Vfs2DbContext* ctx, const char* table);
 
 /**
  * Delete Schema Column
  *
- * @brief Deletes a specific column from a table in the database.
+ * @brief Deletes a specific column from a table in the database and updates the in-memory schema
+ * representation accordingly.
  *
- * This function constructs and executes a SQL query to remove the specified column
- * from the given table. It also updates the database schema accordingly.
+ * This function constructs and executes a SQL query to drop the specified column from the given
+ * table. After successfully deleting the column from the database, it also updates the in-memory
+ * schema representation by removing the corresponding attribute, primary key, and foreign key
+ * entries from the schema of the affected table.
  *
- * @param[in] toks Pointer to tokens structure containing table and column information
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
+ * @param[in] toks Pointer to a tokens structure containing the table name, record identifier, and
+ * attribute name of the column to be deleted
  *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t delete_schema_column(struct tokens* toks);
+status_t delete_schema_column(Vfs2DbContext* ctx, struct tokens* toks);
 
 /**
  * Add Primary Key to Table
  *
- * @brief Adds a new primary key column to a specified table in the database.
+ * @brief Adds a new primary key column to a specified table in the database and updates the
+ * in-memory schema representation accordingly.
  *
- * This function constructs and executes a SQL query to add a new primary key column
- * with the given name and type to the specified table. It also updates the database
- * schema to reflect the addition of the new primary key.
+ * This function constructs and executes a SQL query to add a new primary key column with the given
+ * name and type to the specified table. It also updates the database schema to reflect the addition
+ * of the new primary key.
  *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
  * @param[in] table Name of the table to modify
  * @param[in] pk_name Name of the primary key column to add
  * @param[in] pk_type SQLite data type of the primary key column (e.g., INTEGER, TEXT)
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t add_pk_to_table(const char* table, const char* pk_name, const char* pk_type);
+status_t add_pk_to_table(Vfs2DbContext* ctx, const char* table, const char* pk_name,
+                         const char* pk_type);
 
 /**
  * Add Attribute to Table
  *
- * @brief Adds a new attribute column to a specified table in the database.
+ * @brief Adds a new attribute column to a specified table in the database and updates the
+ * in-memory schema representation accordingly.
  *
- * This function constructs and executes a SQL query to add a new attribute column
- * with the given name and type to the specified table. It also updates the database
- * schema to reflect the addition of the new attribute.
+ * This function constructs and executes a SQL query to add a new attribute column with the given
+ * name and type to the specified table. It also updates the database schema to reflect the addition
+ * of the new attribute.
  *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
  * @param[in] table Name of the table to modify
  * @param[in] attr_name Name of the attribute column to add
  * @param[in] attr_type SQLite data type of the attribute column (e.g., INTEGER, TEXT)
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t add_attribute_to_table(const char* table, const char* attr_name, const char* attr_type);
+status_t add_attribute_to_table(Vfs2DbContext* ctx, const char* table, const char* attr_name,
+                                const char* attr_type);
 
 /**
  * Add Foreign Key to Table
  *
- * @brief Adds a new foreign key column to a specified table in the database.
- * This function constructs and executes a SQL query to add a new foreign key column
- * with the given name and type to the specified table, referencing another table and column.
- * It also updates the database schema to reflect the addition of the new foreign key.
+ * @brief Adds a new foreign key column to a specified table in the database, referencing another
+ * table, and updates the in-memory schema representation accordingly.
  *
+ * This function constructs and executes a SQL query to add a new foreign key column with the given
+ * name to the specified table, referencing the primary key of another table. It also updates the
+ * database schema to reflect the addition of the new foreign key.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection and schema
  * @param[in] table Name of the table to modify
  * @param[in] fk_from Name of the foreign key column to add
- * @param[in] fk_table Name of the referenced table
- * @param[in] fk_to Name of the referenced column in the referenced table
+ * @param[in] fk_table Name of the referenced table that the foreign key will point to
+ * @param[in] fk_to Name of the primary key column in the referenced table that the foreign key will
+ * reference
+ *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t add_fk_to_table(const char* table, const char* fk_from, const char* fk_table,
-                         const char* fk_to);
+status_t add_fk_to_table(Vfs2DbContext* ctx, const char* table, const char* fk_from,
+                         const char* fk_table, const char* fk_to);
 
 #endif // DB_HANDLER_H

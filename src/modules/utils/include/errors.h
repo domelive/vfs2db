@@ -184,6 +184,8 @@ static inline int status_to_errno(status_t status) {
  * @brief Macro to check the result of an SQLite function call and jump to a specified label if the
  * result is not the expected OK status.
  *
+ * @param[in] ctx        Pointer to the Vfs2DbContext containing the database connection (used for
+ * logging SQLite errors)
  * @param[in] call       The SQLite function call to execute and check for errors
  * @param[in] ok_status   The expected SQLite status code indicating success (e.g., SQLITE_OK)
  * @param[in] label      The label to jump to if an error occurs
@@ -196,11 +198,11 @@ static inline int status_to_errno(status_t status) {
  * error code based on the SQLite error code, and jumps to the specified label for cleanup or
  * further error handling.
  */
-#define TRY_SQLITE(call, ok_status, label, fmt, ...)                                               \
+#define TRY_SQLITE(db_conn, call, ok_status, label, fmt, ...)                                      \
     do {                                                                                           \
         int call_result = (call);                                                                  \
         if (call_result != ok_status) {                                                            \
-            LOG_SQLITE_ERROR(db);                                                                  \
+            LOG_SQLITE_ERROR(db_conn);                                                             \
             LOG_ERROR(fmt, ##__VA_ARGS__);                                                         \
             status = sqlite_to_status(call_result);                                                \
             goto label;                                                                            \

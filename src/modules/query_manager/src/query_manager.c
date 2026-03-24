@@ -56,6 +56,8 @@ static query_t query_store[] = {
                                          "type='table' AND name = ?;",
                                          0, NULL},
 
+    [QUERY_TPL_PRAGMA] = {"PRAGMA %s=%s;", 1, NULL},
+
     [QUERY_TPL_SELECT_TABLE_INFO] = {"SELECT "
                                      "ti.name AS column_name,"
                                      "ti.type AS column_type,"
@@ -158,14 +160,14 @@ static query_t query_store[] = {
                                         "%s %s",
                                         1, NULL},
 
-    [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"PRAGMA foreign_keys=off; "
+    [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"PRAGMA foreign_keys=0; "
                                           "BEGIN TRANSACTION; "
                                           "ALTER TABLE %s RENAME TO %s_old; "
                                           "%s "
                                           "INSERT INTO %s SELECT *, '' FROM %s_old; "
                                           "DROP TABLE %s_old; "
                                           "COMMIT; "
-                                          "PRAGMA foreign_keys=on;",
+                                          "PRAGMA foreign_keys=%d;",
                                           2, NULL},
 };
 
@@ -302,7 +304,7 @@ status_t qm_exec_multi_stmt_query(sqlite3* db, QueryID qid, ...) {
 
     LOG_TRACE("Built multi-statement query: %s", buffer);
 
-    TRY_SQLITE(sqlite3_exec(db, buffer, NULL, NULL, NULL), SQLITE_OK, cleanup,
+    TRY_SQLITE(db, sqlite3_exec(db, buffer, NULL, NULL, NULL), SQLITE_OK, cleanup,
                "Failed to execute multi-statement query %d: %s", qid, sqlite3_errmsg(db));
 
 cleanup:
