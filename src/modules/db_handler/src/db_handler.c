@@ -248,7 +248,7 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
             // Add the foreign key to the Schema's hash map of foreign keys.
             add_fk_to_schema(schema, fk);
 
-            LOG_TRACE("  FK: %s -> %s(%s)", column_name, fk_table, fk_column_name);
+            LOG_TRACE("  FK: %s -> %s(%s), id=%d", column_name, fk_table, fk_column_name, fk_id);
 
             // Increment the foreign key count for logging purposes.
             fk_count++;
@@ -803,30 +803,6 @@ status_t update_fk_value(Vfs2DbContext* ctx, struct tokens* toks_linkpath,
     int changes = sqlite3_changes(ctx->db_conn);
     LOG_DEBUG("FK value updated successfully, %d rows affected", changes);
 
-    // Find the schema for the table
-    Schema* schema;
-    TRY_NOT_NULL(schema = find_schema_by_name(ctx->db_schema, toks_linkpath->table), cleanup,
-                 STATUS_DB_ERROR, "Schema for table '%s' not found", toks_linkpath->table);
-
-    // Create a new Fk structure and add it to the schema
-    Fk* new_fk    = malloc(sizeof(Fk));
-    new_fk->from  = strdup(toks_linkpath->attribute);
-    new_fk->table = strdup(toks_linkpath->table);
-    new_fk->to    = strdup(toks_target->attribute);
-
-    Pk* pk;
-    TRY_NOT_NULL(pk = find_pk_by_name(schema, toks_target->attribute), cleanup, STATUS_DB_ERROR,
-                 "Failed to find PK for target attribute '%s' in table '%s'",
-                 toks_target->attribute, toks_target->table);
-
-    new_fk->sqlite_type = pk->sqlite_type;
-
-    // Add to schema
-    add_fk_to_schema(schema, new_fk);
-
-    LOG_DEBUG("FK successfully added to in-memory schema: %s -> %s.%s", toks_linkpath->attribute,
-              toks_target->table, toks_target->attribute);
-
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
@@ -1286,33 +1262,10 @@ status_t add_fk_to_table(Vfs2DbContext* ctx, const char* table, const char* fk_f
         cleanup, "Failed to build query statement for adding FK column '%s' to table '%s'", fk_from,
         table);
 
-    // Print the SQL query stmt
-    char* stmt_sql = sqlite3_expanded_sql(stmt);
-    LOG_TRACE("Built SQL for adding FK: %s", stmt_sql);
-    sqlite3_free(stmt_sql);
-
-    // Update the schema in-memory representation to include the new primary key for the specified
-    // table
-    Fk* new_fk;
-    TRY_NOT_NULL(new_fk = malloc(sizeof(Fk)), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to allocate FK for new FK '%s' in table '%s'", fk_from, table);
-
-    TRY_NOT_NULL(new_fk->from = strdup(fk_from), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to allocate name for new FK '%s' in table '%s'", fk_from, table);
-
-    TRY_NOT_NULL(new_fk->table = strdup(fk_table), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to allocate name for new FK '%s' in table '%s'", fk_table, table);
-
-    TRY_NOT_NULL(new_fk->to = strdup(fk_to), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to allocate name for new FK '%s' in table '%s'", fk_to, table);
-
-    new_fk->sqlite_type = ref_pk->sqlite_type;
-
-    add_fk_to_schema(table_schema, new_fk);
-    update_schema_sql(ctx, table_schema);
-
-    LOG_TRACE("Updated SQL for table '%s': %s", table, table_schema->sql);
-    LOG_DEBUG("FK '%s' added to schema for table '%s'", fk_from, table);
+    free_pk_set(table_schema);
+    free_fk_hashmap(table_schema);
+    free_attr_set(table_schema);
+    init_schema(ctx, table_schema);
 
 cleanup:
     if (stmt)

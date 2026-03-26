@@ -72,6 +72,14 @@ static query_t query_store[] = {
                                      "ON ti.name = fk.\"from\";",
                                      1, NULL},
 
+    [QUERY_TPL_SELECT_FK_ID] = {"SELECT "
+                                "id "
+                                "FROM "
+                                "pragma_foreign_key_list('%s') "
+                                "WHERE "
+                                "\"from\" = ? AND \"table\" = ? AND \"to\" = ?;",
+                                1, NULL},
+
     [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
                                             "%s IS NULL OR %s = '' "
                                             "FROM "

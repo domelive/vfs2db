@@ -426,13 +426,10 @@ fusermount3 -u /tmp/test
 - if the driver is opened on the same database more than once, and the schema changes in one of the instances, the other instance will not be aware of the change.
 - The driver cannot handle adding or changing any constraint.
 - The driver cannot handle database views.
-- FKs are not actually FKs but just references, so the referencial integrity contraints are not enforced (if you set a FK value that is not correct, so long and thank for all
-  fish).
 
 ## Known Bugs
 
 - when you modify a FK with `ln -s target linkpath.vfs2db.lnk`, it works but it tells you that the command failed.
-- Fow now you can only add one foreign key constraint.
 
 ## License
 

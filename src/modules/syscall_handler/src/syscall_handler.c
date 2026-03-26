@@ -1279,7 +1279,12 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
     // This is necessary to handle cases where there are multiple foreign keys in the
     // same table that point to the same target table, which can be used to create
     // composite foreign keys.
+    // LOG with fk id
+    LOG_TRACE("readlink: fk->id=%ld", fk->id);
     HASH_FOREACH(current_fk, table->fks_head) {
+        // LOG with fk id
+        LOG_TRACE("readlink: checking FK %s -> %s(%s) with id %d", current_fk->from,
+                  current_fk->table, current_fk->to, current_fk->id);
         if (strncmp(fk->table, current_fk->table, strlen(fk->table)) == 0 &&
             fk->id == current_fk->id) {
             fks[n_same_fks++] = current_fk;
