@@ -815,8 +815,37 @@ cleanup:
     return code;
 }
 
-// NOTE: for now the create syscall is implemented for the .schema files only, which are treated as
-// regular files with dynamically generated content on read.
+int vfs2db_rmdir(const char* path) {
+    LOG_FUSE_ENTER("rmdir", path);
+    ensure_arena_init();
+
+    status_t       status = STATUS_OK;
+    Vfs2DbContext* ctx    = (Vfs2DbContext*)fuse_get_context()->private_data;
+
+    struct tokens* toks;
+    TRY_NOT_NULL(toks = tokenize_path(path), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to tokenize path '%s'", path);
+
+    // if path is like `/table` we have to drop the specified table.
+    if (toks->table && !toks->record && !toks->attribute) {
+        TRY(drop_table(ctx, toks->table), cleanup, "Failed to drop table '%s'", toks->table);
+        LOG_DEBUG("rmdir: table '%s' dropped", toks->table);
+    }
+    // if path is like `/table/record` we have to delete the specified record from the table.
+    else if (toks->table && toks->record && !toks->attribute) {
+        TRY(delete_record_from_table(ctx, toks), cleanup,
+            "Failed to delete record '%s' from table '%s'", toks->record, toks->table);
+        LOG_DEBUG("rmdir: record '%s' deleted from table '%s'", toks->record, toks->table);
+    }
+
+cleanup:
+    int code = status_to_errno(status);
+    LOG_FUSE_EXIT("rmdir", code);
+    return code;
+}
+
+// NOTE: for now the create syscall is implemented for the .schema files only, which are treated
+// as regular files with dynamically generated content on read.
 int vfs2db_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
     (void)mode;
     (void)fi;
@@ -1072,8 +1101,8 @@ int vfs2db_symlink(const char* target, const char* linkpath) {
     }
 
     // Now we have the relative paths within the VFS2DB filesystem for both the target and the
-    // linkpath. We need to tokenize both paths to get the table, record, and attribute components
-    // for schema lookup and FK update.
+    // linkpath. We need to tokenize both paths to get the table, record, and attribute
+    // components for schema lookup and FK update.
     struct tokens* toks_linkpath = NULL;
     struct tokens* toks_target   = NULL;
 
@@ -1082,8 +1111,8 @@ int vfs2db_symlink(const char* target, const char* linkpath) {
     TRY_NOT_NULL(toks_target = tokenize_path(target_vfs), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to tokenize target");
 
-    // We need to remove the .vfs2db extension from the attribute component of both paths to get the
-    // actual attribute names for schema lookup and FK update.
+    // We need to remove the .vfs2db extension from the attribute component of both paths to get
+    // the actual attribute names for schema lookup and FK update.
     // TODO: TRY them
     toks_linkpath->attribute[strlen(toks_linkpath->attribute) - 4] = 0;
     toks_linkpath->attribute = remove_extension(toks_linkpath->attribute);

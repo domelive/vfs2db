@@ -1074,6 +1074,75 @@ cleanup:
     return status;
 }
 
+status_t drop_table(Vfs2DbContext* ctx, const char* table) {
+    LOG_TRACE("Dropping table: %s", table);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to drop the specified table from the database using the
+    // QUERY_TPL_DROP_TABLE template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_DROP_TABLE, table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for dropping table '%s'", table);
+
+    // Execute the DROP TABLE statement to remove the specified table from the database.
+    TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for dropping table '%s'", table);
+
+    LOG_DEBUG("Table dropped successfully: %s", table);
+
+    // After dropping the specified table from the database, we need to update our in-memory schema
+    // representation to remove the schema of the dropped table to ensure that our in-memory
+    // representation of the database schema is consistent with the actual state of the database.
+    Schema* schema;
+    TRY_NOT_NULL(schema = find_schema_by_name(ctx->db_schema, table), cleanup, STATUS_DB_ERROR,
+                 "Schema for dropped table '%s' not found in schema representation", table);
+    free_schema_content(schema);
+    remove_schema(ctx->db_schema, schema);
+
+    LOG_DEBUG("Schema for dropped table '%s' removed from in-memory schema representation", table);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
+status_t delete_record_from_table(Vfs2DbContext* ctx, struct tokens* toks) {
+    LOG_TRACE("Deleting record from table: %s/%s", toks->table, toks->record);
+
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt   = NULL;
+
+    // Build the dynamic query statement to delete the specified record from the given table using
+    // the QUERY_TPL_DELETE_RECORD_FROM_TABLE template.
+    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
+                     ctx->db_conn, QUERY_TPL_DELETE_RECORD_FROM_TABLE, toks->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for deleting record from table: '%s/%s'",
+                 toks->table, toks->record);
+
+    // Bind the record value to the statement to specify which record should be deleted from the
+    // database table.
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+               SQLITE_OK, cleanup,
+               "Failed to bind record value for deleting record from table: '%s/%s'", toks->table,
+               toks->record);
+
+    // Execute the DELETE statement to remove the specified record from the database.
+    TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
+               "Failed to execute query for deleting record from table: '%s/%s'", toks->table,
+               toks->record);
+
+    LOG_DEBUG("Record deleted successfully: %s/%s", toks->table, toks->record);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
 status_t delete_schema_column(Vfs2DbContext* ctx, struct tokens* toks) {
     ensure_arena_init();
     LOG_TRACE("Deleting schema column: %s/%s/%s", toks->table, toks->record, toks->attribute);
@@ -1262,9 +1331,7 @@ status_t add_fk_to_table(Vfs2DbContext* ctx, const char* table, const char* fk_f
         cleanup, "Failed to build query statement for adding FK column '%s' to table '%s'", fk_from,
         table);
 
-    free_pk_set(table_schema);
-    free_fk_hashmap(table_schema);
-    free_attr_set(table_schema);
+    free_schema_content(table_schema);
     init_schema(ctx, table_schema);
 
 cleanup:

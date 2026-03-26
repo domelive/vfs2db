@@ -177,6 +177,10 @@ static query_t query_store[] = {
                                           "COMMIT; "
                                           "PRAGMA foreign_keys=%d;",
                                           2, NULL},
+
+    [QUERY_TPL_DROP_TABLE] = {"DROP TABLE IF EXISTS %s;", 1, NULL},
+
+    [QUERY_TPL_DELETE_RECORD_FROM_TABLE] = {"DELETE FROM %s WHERE rowid = ?;", 1, NULL},
 };
 
 status_t qm_init(sqlite3* db) {
