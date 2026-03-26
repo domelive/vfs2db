@@ -56,6 +56,8 @@ static query_t query_store[] = {
                                          "type='table' AND name = ?;",
                                          0, NULL},
 
+    [QUERY_GET_SCHEMA_VERSION] = {"PRAGMA schema_version;", 0, NULL},
+
     [QUERY_TPL_PRAGMA] = {"PRAGMA %s=%s;", 1, NULL},
 
     [QUERY_TPL_SELECT_TABLE_INFO] = {"SELECT "

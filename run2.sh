@@ -12,5 +12,5 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-mkdir -p /tmp/test
-./src/vfs2db -f -o db=../test_seq.db -o log=trace -o foreign_keys=1 -o auto_cache /tmp/test
+mkdir -p /tmp/test2
+./src/vfs2db -f -o db=../test_seq.db -o log=trace -o foreign_keys=1 -o auto_cache /tmp/test2

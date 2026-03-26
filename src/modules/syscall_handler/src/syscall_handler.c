@@ -329,6 +329,10 @@ void* vfs2db_init(struct fuse_conn_info* conn, struct fuse_config* cfg) {
             "Failed to set SQLite pragma foreign_keys=ON");
     }
 
+    // Set schema_version
+    TRY(get_schema_version(ctx, &ctx->schema_version), cleanup,
+        "Failed to get database schema version");
+
     // Initialize the schema structure
     if (init_db_schema(ctx) != STATUS_OK) {
         LOG_FATAL("Failed to initialize database schema");
@@ -381,13 +385,6 @@ void vfs2db_destroy(void* private_data) {
     }
 
     if (ctx->db_schema) {
-        HASH_FOREACH(current_schema, ctx->db_schema->tables_head) {
-            LOG_TRACE("Freeing schema: %s", current_schema->name);
-            free_attr_set(current_schema);
-            free_pk_set(current_schema);
-            free_fk_hashmap(current_schema);
-            free(current_schema->name);
-        }
         free_schema_hashmap(ctx->db_schema);
         free(ctx->db_schema);
         ctx->db_schema = NULL;
@@ -420,6 +417,40 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
         LOG_ERROR("FUSE context private data is NULL in getattr");
         LOG_FUSE_EXIT("getattr", -EFAULT);
         return -EFAULT;
+    }
+
+    // Check schema version
+    int current_schema_version;
+    TRY(get_schema_version(ctx, &current_schema_version), cleanup,
+        "Failed to get database schema version");
+    if (current_schema_version != ctx->schema_version) {
+        LOG_WARN("Database schema version has changed (was %d, now %d), reloading schema",
+                 ctx->schema_version, current_schema_version);
+
+        free_schema_hashmap(ctx->db_schema);
+        ctx->db_schema = NULL;
+
+        // Reload schema
+        TRY_NOT_NULL(ctx->db_schema = malloc(sizeof(DbSchema)), cleanup, STATUS_ALLOC_ERROR,
+                     "Failed to allocate DbSchema");
+
+        if (init_db_schema(ctx) != STATUS_OK) {
+            LOG_FATAL("Failed to initialize database schema");
+            free(ctx->db_schema);
+            ctx->db_schema = NULL;
+            LOG_FUSE_EXIT("getattr", -EIO);
+            return -EIO;
+        }
+
+        // For each table, get all the info
+        HASH_FOREACH(current_schema, ctx->db_schema->tables_head) {
+            LOG_DEBUG("Reloading schema for table: %s", current_schema->name);
+            if (init_schema(ctx, current_schema) != STATUS_OK) {
+                LOG_ERROR("Failed to init schema for table: %s", current_schema->name);
+            }
+        }
+
+        ctx->schema_version = current_schema_version;
     }
 
     // Initialize the stat structure to zero to avoid returning uninitialized values for fields we

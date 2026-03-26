@@ -501,9 +501,11 @@ static inline void free_schema_hashmap(DbSchema* schema) {
         return;
 
     HASH_FOREACH(current_schema, schema->tables_head) {
-        HASH_DEL(schema->tables_head, current_schema);
-        free(current_schema);
+        free_schema_content(current_schema);
+        remove_schema(schema, current_schema);
     }
+
+    schema->tables_head = NULL;
 }
 
 /**

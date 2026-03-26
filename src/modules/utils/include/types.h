@@ -154,6 +154,8 @@ typedef struct Vfs2DbContext {
     const char* db_path;
 
     bool foreign_keys_on;
+
+    int schema_version;
 } Vfs2DbContext;
 
 // =============================================================

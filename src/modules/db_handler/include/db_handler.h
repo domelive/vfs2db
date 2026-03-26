@@ -60,6 +60,23 @@
 status_t set_sqlite_pragma(Vfs2DbContext* ctx, const char* pragma, const char* value);
 
 /**
+ * Get Schema Version
+ *
+ * @brief Retrieves the current schema version of the database.
+ *
+ * This function executes a SQL query to fetch the schema version from the database and returns it
+ * through the `version` output parameter. The schema version is used to track changes to the
+ * database structure and ensure compatibility with the application.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[out] version Pointer to an integer variable where the retrieved schema version will be
+ * stored
+ *
+ * @return STATUS_OK on success, or an appropriate error status on failure
+ */
+status_t get_schema_version(Vfs2DbContext* ctx, int* version);
+
+/**
  * Initialize Database Schema
  *
  * @brief Initializes the database schema by retrieving the names of all tables in the database

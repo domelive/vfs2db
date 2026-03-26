@@ -108,6 +108,26 @@ cleanup:
     return status;
 }
 
+status_t get_schema_version(Vfs2DbContext* ctx, int* version) {
+    status_t      status = STATUS_OK;
+    sqlite3_stmt* stmt;
+
+    TRY_NOT_NULL(stmt = qm_get_static_query_statement(ctx->db_conn, QUERY_GET_SCHEMA_VERSION),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to get static query statement for schema version");
+
+    TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
+               "Failed to execute query for schema version");
+
+    *version = sqlite3_column_int(stmt, 0);
+    LOG_INFO("Database schema version: %d", version);
+
+cleanup:
+    if (stmt)
+        sqlite3_finalize(stmt);
+    return status;
+}
+
 status_t init_db_schema(Vfs2DbContext* ctx) {
     status_t status = STATUS_OK;
 
