@@ -341,6 +341,32 @@ status_t insert_record_into_table(Vfs2DbContext* ctx, struct tokens* toks);
 status_t create_empty_table(Vfs2DbContext* ctx, const char* table);
 
 /**
+ * Drop Table
+ *
+ * @brief Drops a specified table from the database, removing all its data and schema definition.
+ * This function constructs and executes a SQL query to drop the table if it exists in the database.
+
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] table Name of the table to drop
+ */
+status_t drop_table(Vfs2DbContext* ctx, const char* table);
+
+/**
+ * Delete Record from Table
+ *
+ * @brief Deletes a specific record from a table in the database.
+ *
+ * This function constructs and executes a SQL query to delete the record with the specified ID
+ * from the given table.
+ *
+ * @param[in] ctx Pointer to the Vfs2DbContext containing the database connection
+ * @param[in] toks Pointer to tokens structure containing table and record information
+ *
+ * @return STATUS_OK on success, STATUS_DB_ERROR on failure
+ */
+status_t delete_record_from_table(Vfs2DbContext* ctx, struct tokens* toks);
+
+/**
  * Delete Schema Column
  *
  * @brief Deletes a specific column from a table in the database and updates the in-memory schema

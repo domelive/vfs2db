@@ -144,7 +144,7 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
  * VFS2DB Mkdir
  *
  * @brief Creates a new directory in the VFS2DB filesystem, which corresponds to creating a new
- * table in the database or a new recozrd.
+ * table in the database or a new record.
  *
  * @param[in] path    The directory path to create
  * @param[in] mode    The directory mode (not used in this case)
@@ -152,6 +152,18 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
  * @return 0 on success, negative error code on failure
  */
 int vfs2db_mkdir(const char* path, mode_t mode);
+
+/**
+ * VFS2DB Rmdir
+ *
+ * @brief Removes a directory in the VFS2DB filesystem, which corresponds to deleting a table or a
+ * record from the database.
+ *
+ * @param[in] path    The directory path to remove
+ *
+ * @return 0 on success, negative error code on failure
+ */
+int vfs2db_rmdir(const char* path);
 
 /**
  * VFS2DB Create

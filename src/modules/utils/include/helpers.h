@@ -456,6 +456,39 @@ static inline void free_fk_hashmap(Schema* schema) {
 // free any hash map, given the appropriate free function for the elements.
 
 /**
+ * free_schema_content
+ *
+ * @brief Free all content of a Schema, including primary keys, attributes, and foreign keys
+ *
+ * @param[in,out] schema Pointer to the Schema structure whose content will be freed
+ */
+static inline void free_schema_content(Schema* schema) {
+    if (!schema)
+        return;
+
+    free_pk_set(schema);
+    free_attr_set(schema);
+    free_fk_hashmap(schema);
+}
+
+/**
+ * remove_schema
+ *
+ * @brief Remove Schema from DbSchema
+ *
+ * @param[in,out] db_schema Pointer to the DbSchema structure from which the schema will be removed
+ * @param[in]     schema    Pointer to the Schema structure to remove
+ */
+static inline void remove_schema(DbSchema* db_schema, Schema* schema) {
+    if (!db_schema || !schema)
+        return;
+
+    HASH_DEL(db_schema->tables_head, schema);
+    free(schema->name);
+    free(schema);
+}
+
+/**
  * free_schema_hashmap
  *
  * @brief Free Foreign Key Hashmap in Schema
