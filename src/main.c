@@ -143,7 +143,8 @@ int main(int argc, char* argv[]) {
         logger_cleanup();
         return 1;
     }
-    //  sqlite3_busy_timeout(db, 5000);
+
+    sqlite3_busy_timeout(ctx.db_conn, 5000);
 
     ctx.db_path = realpath(opt.db_path, NULL);
     if (!ctx.db_path) {
