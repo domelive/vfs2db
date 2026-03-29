@@ -36,7 +36,6 @@
 typedef struct query_t {
     const char* sql;
     int type; // 0 for static, 1 for dynamic, 2 for multiple statement queries like transactions;
-    sqlite3_stmt* stmt;
 } query_t;
 
 static query_t query_store[] = {
@@ -46,7 +45,7 @@ static query_t query_store[] = {
                                   "sqlite_master "
                                   "WHERE "
                                   "type='table' AND name NOT LIKE 'sqlite_%';",
-                                  0, NULL},
+                                  0},
 
     [QUERY_SELECT_TABLE_QUERY_STRING] = {"SELECT "
                                          "sql "
@@ -54,11 +53,11 @@ static query_t query_store[] = {
                                          "sqlite_master "
                                          "WHERE "
                                          "type='table' AND name = ?;",
-                                         0, NULL},
+                                         0},
 
-    [QUERY_GET_SCHEMA_VERSION] = {"PRAGMA schema_version;", 0, NULL},
+    [QUERY_GET_SCHEMA_VERSION] = {"PRAGMA schema_version;", 0},
 
-    [QUERY_TPL_PRAGMA] = {"PRAGMA %s=%s;", 1, NULL},
+    [QUERY_TPL_PRAGMA] = {"PRAGMA %s=%s;", 1},
 
     [QUERY_TPL_SELECT_TABLE_INFO] = {"SELECT "
                                      "ti.name AS column_name,"
@@ -72,7 +71,7 @@ static query_t query_store[] = {
                                      "LEFT JOIN "
                                      "pragma_foreign_key_list('%s') fk "
                                      "ON ti.name = fk.\"from\";",
-                                     1, NULL},
+                                     1},
 
     [QUERY_TPL_SELECT_FK_ID] = {"SELECT "
                                 "id "
@@ -80,7 +79,7 @@ static query_t query_store[] = {
                                 "pragma_foreign_key_list('%s') "
                                 "WHERE "
                                 "\"from\" = ? AND \"table\" = ? AND \"to\" = ?;",
-                                1, NULL},
+                                1},
 
     [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
                                             "%s IS NULL OR %s = '' "
@@ -88,7 +87,7 @@ static query_t query_store[] = {
                                             "%s "
                                             "WHERE "
                                             "rowid = ?",
-                                            1, NULL},
+                                            1},
 
     [QUERY_TPL_SELECT_ATTRIBUTE_SIZE] = {"SELECT "
                                          "LENGTH(%s) "
@@ -96,7 +95,7 @@ static query_t query_store[] = {
                                          "%s "
                                          "WHERE "
                                          "rowid = ?",
-                                         1, NULL},
+                                         1},
 
     [QUERY_TPL_SELECT_ATTRIBUTE] = {"SELECT "
                                     "%s "
@@ -104,7 +103,7 @@ static query_t query_store[] = {
                                     "%s "
                                     "WHERE "
                                     "rowid = ?",
-                                    1, NULL},
+                                    1},
 
     [QUERY_TPL_SELECT_CHUNK_ATTRIBUTE] = {"SELECT "
                                           "substr(%s, %ld + 1, %ld) "
@@ -112,7 +111,7 @@ static query_t query_store[] = {
                                           "%s "
                                           "WHERE "
                                           "rowid = ?",
-                                          1, NULL},
+                                          1},
 
     [QUERY_TPL_UPDATE_ATTRIBUTE] = {"UPDATE "
                                     "%s "
@@ -120,20 +119,20 @@ static query_t query_store[] = {
                                     "%s = ? "
                                     "WHERE "
                                     "rowid = ?",
-                                    1, NULL},
+                                    1},
 
     [QUERY_TPL_SELECT_TABLE_ROWIDS] = {"SELECT "
                                        "rowid "
                                        "FROM "
                                        "%s",
-                                       1, NULL},
+                                       1},
 
     [QUERY_TPL_SELECT_ROWID] = {"SELECT "
                                 "rowid "
                                 "FROM "
                                 "%s "
                                 "WHERE rowid = ?",
-                                1, NULL},
+                                1},
 
     [QUERY_TPL_UPDATE_ZERO_BLOB] = {"UPDATE "
                                     "%s "
@@ -141,34 +140,34 @@ static query_t query_store[] = {
                                     "%s = CAST(IFNULL(%s, X'') || ? AS BLOB) "
                                     "WHERE "
                                     "rowid = ?",
-                                    1, NULL},
+                                    1},
 
     [QUERY_TPL_INSERT_RECORD_INTO_TABLE] = {"INSERT INTO "
                                             "%s (rowid) "
                                             "VALUES (%s)",
-                                            1, NULL},
+                                            1},
 
     [QUERY_TPL_CREATE_EMPTY_TABLE] = {"CREATE TABLE IF NOT EXISTS "
                                       "%s (rowid INTEGER PRIMARY KEY AUTOINCREMENT)",
-                                      1, NULL},
+                                      1},
 
     [QUERY_TPL_DROP_SCHEMA_COLUMN] = {"ALTER TABLE "
                                       "%s "
                                       "DROP COLUMN "
                                       "%s",
-                                      1, NULL},
+                                      1},
 
     [QUERY_TPL_ADD_PRIMARY_KEY_COLUMN] = {"ALTER TABLE "
                                           "%s "
                                           "ADD COLUMN "
                                           "%s %s PRIMARY KEY",
-                                          1, NULL},
+                                          1},
 
     [QUERY_TPL_ADD_ATTRIBUTE_COLUMN] = {"ALTER TABLE "
                                         "%s "
                                         "ADD COLUMN "
                                         "%s %s",
-                                        1, NULL},
+                                        1},
 
     [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"PRAGMA foreign_keys=0; "
                                           "BEGIN TRANSACTION; "
@@ -178,11 +177,11 @@ static query_t query_store[] = {
                                           "DROP TABLE %s_old; "
                                           "COMMIT; "
                                           "PRAGMA foreign_keys=%d;",
-                                          2, NULL},
+                                          2},
 
-    [QUERY_TPL_DROP_TABLE] = {"DROP TABLE IF EXISTS %s;", 1, NULL},
+    [QUERY_TPL_DROP_TABLE] = {"DROP TABLE IF EXISTS %s;", 1},
 
-    [QUERY_TPL_DELETE_RECORD_FROM_TABLE] = {"DELETE FROM %s WHERE rowid = ?;", 1, NULL},
+    [QUERY_TPL_DELETE_RECORD_FROM_TABLE] = {"DELETE FROM %s WHERE rowid = ?;", 1},
 };
 
 status_t qm_init(sqlite3* db) {
@@ -239,7 +238,9 @@ sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid) {
         return NULL;
     }
 
-    if (sqlite3_prepare_v2(db, query_store[qid].sql, -1, &query_store[qid].stmt, NULL) !=
+    sqlite3_stmt* s;
+
+    if (sqlite3_prepare_v2(db, query_store[qid].sql, -1, &s, NULL) !=
         SQLITE_OK) {
         LOG_ERROR("Failed to prepare static statement for QueryID %d: %s", qid,
                   sqlite3_errmsg(NULL));
@@ -247,7 +248,6 @@ sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid) {
     }
 
     LOG_TRACE("Static statement for QueryID %d prepared successfully", qid);
-    sqlite3_stmt* s = query_store[qid].stmt;
 
     // Reset the statement to clear any previous bindings and state before returning it for use.
     // This ensures that the statement is in a clean state when retrieved for execution, preventing

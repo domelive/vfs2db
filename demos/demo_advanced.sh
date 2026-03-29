@@ -4,11 +4,9 @@ DRIVER_BIN="/home/domelive/progetto_sistemi_virtuali/vfs2db/build/src/vfs2db"
 DB_FILE="/home/domelive/progetto_sistemi_virtuali/vfs2db/databases/legacy.db"
 MNT_POINT="/tmp/test"
 
-LEGACY_PATH_THRESHOLD="/home/domelive/var/legacy_app/data/config_threshold.txt"
-LEGACY_PATH_SENSOR="/home/domelive/var/legacy_app/data/sensor_1_out.txt"
-LEGACY_PATH_SCRIPT="/home/domelive/opt/legacy_app/bin/run_sensor_poll.sh"
-
-mkdir -p "/home/domelive/var/legacy_app/data/"
+LEGACY_PATH_THRESHOLD="./config_threshold.txt"
+LEGACY_PATH_SENSOR="./sensor_1_out.txt"
+LEGACY_PATH_SCRIPT="./run_sensor_poll.sh"
 
 mkdir -p "$MNT_POINT"
 

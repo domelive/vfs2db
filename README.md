@@ -423,7 +423,6 @@ fusermount3 -u /tmp/test
 
 - `set_attribute_empty` function does not work for `NOT NULL` attributes.
 - `memory_arena` module does not support allocations larger than the arena size (5 MB by default).
-- if the driver is opened on the same database more than once, and the schema changes in one of the instances, the other instance will not be aware of the change.
 - The driver cannot handle adding or changing any constraint.
 - The driver cannot handle database views.
 
