@@ -120,7 +120,7 @@ status_t get_schema_version(Vfs2DbContext* ctx, int* version) {
 
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
                "Failed to execute query for schema version");
-    
+
     LOG_TRACE("Query executed successfully, retrieving schema version from result...");
 
     *version = sqlite3_column_int64(stmt, 0);
@@ -508,8 +508,6 @@ status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, struct tokens* toks, off_
     // LOG_TRACE("Data: %s", data);
     memcpy(*bytes, data, size);
 
-    LOG_TRACE("Data copied to bytes: %s", *bytes);
-
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
@@ -651,9 +649,9 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
     status_t      status      = STATUS_OK;
     sqlite3_stmt* stmt        = NULL;
     sqlite3_blob* blob_handle = NULL;
+    char*         bytes       = NULL;
+    char*         new_bytes   = NULL;
     int           type;
-    char*    bytes;
-    char*    new_bytes;
 
     // Determine the SQLite data type of the attribute to decide how to perform the update.
     TRY(get_attribute_type(ctx, toks, &type), cleanup,
@@ -743,8 +741,7 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
         LOG_TRACE("Current attribute, new data size after update: %zu bytes", new_bytes_size);
 
         // Allocate new buffer for the updated attribute value
-        TRY_NOT_NULL(new_bytes = calloc(1, new_bytes_size + 1), cleanup,
-                     STATUS_ALLOC_ERROR,
+        TRY_NOT_NULL(new_bytes = calloc(1, new_bytes_size + 1), cleanup, STATUS_ALLOC_ERROR,
                      "Failed to allocate buffer for updated attribute value for '%s/%s/%s'",
                      toks->table, toks->record, toks->attribute);
 
@@ -776,7 +773,6 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
 
         int changes = sqlite3_changes(ctx->db_conn);
         LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
-        
     }
 
 cleanup:
