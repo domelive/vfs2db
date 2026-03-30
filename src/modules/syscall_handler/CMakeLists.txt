@@ -15,6 +15,7 @@ target_link_libraries(syscall_handler
         logger
         arena
         db_handler
+        parser
     PRIVATE
         PkgConfig::FUSE3
         PkgConfig::SQLITE3   # Required because it calls sqlite3_close

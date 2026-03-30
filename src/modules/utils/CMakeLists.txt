@@ -7,3 +7,10 @@ target_include_directories(utils
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
+
+target_link_libraries(utils
+    INTERFACE
+        logger
+        db_handler
+        types
+)

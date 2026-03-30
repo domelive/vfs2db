@@ -36,11 +36,17 @@
 #include <unistd.h>
 
 #include "arena.h"
+#include "attribute.h"
+#include "context.h"
+#include "db_schema.h"
 #include "errors.h"
+#include "foreign_key.h"
 #include "helpers.h"
 #include "logger.h"
+#include "parser.h"
+#include "primary_key.h"
 #include "query_manager.h"
-#include "types.h"
+#include "schema.h"
 
 /**
  * Set SQLite PRAGMA
@@ -121,7 +127,7 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema);
  *
  * @return STATUS_OK if the record exists, or an appropriate error status on failure
  */
-status_t record_exists(Vfs2DbContext* ctx, struct tokens* toks);
+status_t record_exists(Vfs2DbContext* ctx, PathFieldsResult* fields);
 
 /**
  * Get Attribute All Bytes
@@ -142,7 +148,7 @@ status_t record_exists(Vfs2DbContext* ctx, struct tokens* toks);
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_all_bytes(Vfs2DbContext* ctx, struct tokens* toks, char** bytes,
+status_t get_attribute_all_bytes(Vfs2DbContext* ctx, PathFieldsResult* fields, char** bytes,
                                  size_t* size);
 
 /**
@@ -165,7 +171,7 @@ status_t get_attribute_all_bytes(Vfs2DbContext* ctx, struct tokens* toks, char**
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, struct tokens* toks, off_t offset,
+status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, PathFieldsResult* fields, off_t offset,
                                    char** bytes, size_t size);
 
 /**
@@ -184,7 +190,7 @@ status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, struct tokens* toks, off_
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t is_attribute_null(Vfs2DbContext* ctx, struct tokens* toks, bool* is_null);
+status_t is_attribute_null(Vfs2DbContext* ctx, PathFieldsResult* fields, bool* is_null);
 
 /**
  * Get Attribute Type
@@ -203,7 +209,7 @@ status_t is_attribute_null(Vfs2DbContext* ctx, struct tokens* toks, bool* is_nul
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_size(Vfs2DbContext* ctx, struct tokens* toks, size_t* size);
+status_t get_attribute_size(Vfs2DbContext* ctx, PathFieldsResult* fields, size_t* size);
 
 /**
  * Get Attribute Type
@@ -222,7 +228,7 @@ status_t get_attribute_size(Vfs2DbContext* ctx, struct tokens* toks, size_t* siz
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t get_attribute_type(Vfs2DbContext* ctx, struct tokens* toks, int* type);
+status_t get_attribute_type(Vfs2DbContext* ctx, PathFieldsResult* fields, int* type);
 
 /**
  * Bind Attribute Value
@@ -244,7 +250,7 @@ status_t get_attribute_type(Vfs2DbContext* ctx, struct tokens* toks, int* type);
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const char* buffer,
+status_t update_attribute_value(Vfs2DbContext* ctx, PathFieldsResult* fields, const char* buffer,
                                 size_t size, off_t offset);
 
 /**
@@ -264,8 +270,8 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t update_fk_value(Vfs2DbContext* ctx, struct tokens* toks_linkpath,
-                         struct tokens* toks_target);
+status_t update_fk_value(Vfs2DbContext* ctx, PathFieldsResult* fields_linkpath,
+                         PathFieldsResult* fields_target);
 
 /**
  * Set Attribute Empty
@@ -281,7 +287,7 @@ status_t update_fk_value(Vfs2DbContext* ctx, struct tokens* toks_linkpath,
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t set_attribute_empty(Vfs2DbContext* ctx, struct tokens* toks);
+status_t set_attribute_empty(Vfs2DbContext* ctx, PathFieldsResult* fields);
 
 /**
  * Get Table Row IDs
@@ -338,7 +344,7 @@ status_t get_rowid_from_pks(Vfs2DbContext* ctx, const char* table, Fk* fks[], ch
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t insert_record_into_table(Vfs2DbContext* ctx, struct tokens* toks);
+status_t insert_record_into_table(Vfs2DbContext* ctx, PathFieldsResult* fields);
 
 /**
  * Create Empty Table
@@ -381,7 +387,7 @@ status_t drop_table(Vfs2DbContext* ctx, const char* table);
  *
  * @return STATUS_OK on success, STATUS_DB_ERROR on failure
  */
-status_t delete_record_from_table(Vfs2DbContext* ctx, struct tokens* toks);
+status_t delete_record_from_table(Vfs2DbContext* ctx, PathFieldsResult* fields);
 
 /**
  * Delete Schema Column
@@ -400,7 +406,7 @@ status_t delete_record_from_table(Vfs2DbContext* ctx, struct tokens* toks);
  *
  * @return STATUS_OK on success, or an appropriate error status on failure
  */
-status_t delete_schema_column(Vfs2DbContext* ctx, struct tokens* toks);
+status_t delete_schema_column(Vfs2DbContext* ctx, PathFieldsResult* fields);
 
 /**
  * Add Primary Key to Table

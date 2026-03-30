@@ -1,8 +1,8 @@
-add_library(db_handler
-    src/db_handler.c
+add_library(parser
+    src/parser.c
 )
 
-target_include_directories(db_handler
+target_include_directories(parser
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
@@ -10,16 +10,13 @@ target_include_directories(db_handler
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(db_handler
+target_link_libraries(parser
     PUBLIC
+        logger
         utils
         arena
-        logger
-        query_manager
-        types
-        parser
     PRIVATE
         PkgConfig::SQLITE3
 )
 
-target_compile_options(db_handler PRIVATE -Wall)
+target_compile_options(parser PRIVATE -Wall)

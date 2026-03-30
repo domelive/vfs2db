@@ -49,55 +49,13 @@ static inline void ensure_arena_init() {
     arena_reset(arena);
 }
 
-/**
- * Parse SQLite Type
- *
- * @brief Parses a SQLite column type string and determines the corresponding SQLite type affinity.
- *
- * SQLite uses type affinity to determine how to store and compare values in a column, based on the
- * declared type of the column. This function analyzes the type string and returns the appropriate
- * SQLite type affinity constant (e.g., SQLITE_INTEGER, SQLITE_TEXT, SQLITE_BLOB, SQLITE_FLOAT)
- * based on the presence of certain keywords in the type string.
- *
- * @return The SQLite type affinity constant corresponding to the given type string
- */
-static inline int parse_sqlite_type(const char* typestr) {
-    LOG_TRACE("Parsing SQLITE type...");
-
-    if (!typestr) {
-        LOG_TRACE("Column has no type affinity, defaulting to TEXT");
-        return SQLITE_TEXT;
-    }
-
-    if (strcasestr(typestr, "INT")) {
-        LOG_TRACE("Column type '%s' has INTEGER affinity", typestr);
-        return SQLITE_INTEGER;
-    }
-
-    if (strcasestr(typestr, "CHAR") || strcasestr(typestr, "CLOB") || strcasestr(typestr, "TEXT")) {
-        LOG_TRACE("Column type '%s' has TEXT affinity", typestr);
-        return SQLITE_TEXT;
-    }
-
-    if (strcasestr(typestr, "BLOB")) {
-        LOG_TRACE("Column type '%s' has BLOB affinity", typestr);
-        return SQLITE_BLOB;
-    }
-
-    if (strcasestr(typestr, "REAL") || strcasestr(typestr, "FLOA") || strcasestr(typestr, "DOUB")) {
-        LOG_TRACE("Column type '%s' has FLOAT affinity", typestr);
-        return SQLITE_FLOAT;
-    }
-
-    LOG_TRACE("Fallback to SQLITE_TEXT");
-
-    return SQLITE_TEXT;
-}
-
 status_t set_sqlite_pragma(Vfs2DbContext* ctx, const char* pragma, const char* value) {
-    status_t      status = STATUS_OK;
-    sqlite3_stmt* pstmt =
-        qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_PRAGMA, pragma, value);
+    status_t status = STATUS_OK;
+
+    sqlite3_stmt* pstmt = NULL;
+    TRY_NOT_NULL(pstmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_PRAGMA, pragma, value),
+                 cleanup, STATUS_DB_ERROR, "Failed to build query statement for PRAGMA '%s=%s'",
+                 pragma, value);
 
     TRY_SQLITE(ctx->db_conn, sqlite3_step(pstmt), SQLITE_DONE, cleanup,
                "Failed to execute PRAGMA foreign_keys=ON");
@@ -112,9 +70,8 @@ status_t get_schema_version(Vfs2DbContext* ctx, int* version) {
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt;
 
-    TRY_NOT_NULL(stmt = qm_get_static_query_statement(ctx->db_conn, QUERY_GET_SCHEMA_VERSION),
-                 cleanup, STATUS_DB_ERROR,
-                 "Failed to get static query statement for schema version");
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_GET_SCHEMA_VERSION), cleanup,
+                 STATUS_DB_ERROR, "Failed to build query statement for schema version");
 
     LOG_TRACE("Executing query to get schema version...");
 
@@ -140,7 +97,9 @@ status_t init_db_schema(Vfs2DbContext* ctx) {
     ctx->db_schema->tables_head = NULL;
 
     // Execute the SQL query to retrieve the names of all tables in the database.
-    sqlite3_stmt* pstmt = qm_get_static_query_statement(ctx->db_conn, QUERY_SELECT_TABLES_NAME);
+    sqlite3_stmt* pstmt = NULL;
+    TRY_NOT_NULL(pstmt = qm_build_query_statement(ctx->db_conn, QUERY_SELECT_TABLES_NAME), cleanup,
+                 STATUS_DB_ERROR, "Failed to build query statement for table names");
 
     // Iterate over the query results and populate the DbSchema structure with the table names.
     while (sqlite3_step(pstmt) == SQLITE_ROW) {
@@ -177,12 +136,12 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
 
     LOG_DEBUG("Initializing schema for table: %s", schema->name);
 
-    sqlite3_stmt* stmt;
+    sqlite3_stmt* stmt = NULL;
 
     // Build the dynamic query statement to retrieve column information for the specified table
     // using the QUERY_TPL_SELECT_TABLE_INFO template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_SELECT_TABLE_INFO,
-                                                         schema->name, schema->name),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_TABLE_INFO,
+                                                 schema->name, schema->name),
                  cleanup, STATUS_DB_ERROR, "Failed to build query statement for table info: '%s'",
                  schema->name);
 
@@ -223,7 +182,7 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
 
             // Parse the SQLite type affinity for the primary key column based on its declared type
             // and store it in the Pk structure.
-            pk->sqlite_type = parse_sqlite_type(column_type_str);
+            pk->sqlite_type = sqlite_str_to_type(column_type_str);
             LOG_TRACE("Parsed SQLite type for PK '%s': %d", column_name, pk->sqlite_type);
 
             // Add the primary key to the Schema's hash map of primary keys.
@@ -267,7 +226,7 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
 
             // Parse the SQLite type affinity for the foreign key column based on its declared type
             // and store it in the Fk structure.
-            fk->sqlite_type = parse_sqlite_type(column_type_str);
+            fk->sqlite_type = sqlite_str_to_type(column_type_str);
 
             // Add the foreign key to the Schema's hash map of foreign keys.
             add_fk_to_schema(schema, fk);
@@ -296,7 +255,7 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
 
             // Parse the SQLite type affinity for the normal attribute column based on its declared
             // type and store it in the Attr structure.
-            attr->sqlite_type = parse_sqlite_type(column_type_str);
+            attr->sqlite_type = sqlite_str_to_type(column_type_str);
 
             // Add the normal attribute to the Schema's hash map of attributes.
             add_attribute_to_schema(schema, attr);
@@ -312,29 +271,28 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
               attr_count);
 
     // Select sql table string
-    sqlite3_stmt* static_stmt;
-    TRY_NOT_NULL(static_stmt =
-                     qm_get_static_query_statement(ctx->db_conn, QUERY_SELECT_TABLE_QUERY_STRING),
+    sqlite3_stmt* stmt1;
+    TRY_NOT_NULL(stmt1 = qm_build_query_statement(ctx->db_conn, QUERY_SELECT_TABLE_QUERY_STRING),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to get static query statement for table query string: '%s'", schema->name);
 
     LOG_TRACE("Static query for table query string retrieved");
 
     // Bind the table name to the query
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(static_stmt, 1, schema->name, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt1, 1, schema->name, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup, "Failed to bind table name for table query string: '%s'",
                schema->name);
 
     LOG_TRACE("Static query for table query string binded");
 
-    TRY_SQLITE(ctx->db_conn, sqlite3_step(static_stmt), SQLITE_ROW, cleanup,
+    TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt1), SQLITE_ROW, cleanup,
                "Failed to execute query for table query string for '%s'", schema->name);
 
     LOG_TRACE("Static query for table query string executed");
 
     // Retrieve the SQL query string for the table from the query result and store it in the Schema
-    const char* query_string;
-    TRY_NOT_NULL(query_string = (const char*)sqlite3_column_text(static_stmt, 0), cleanup,
+    const char* query_string = NULL;
+    TRY_NOT_NULL(query_string = (const char*)sqlite3_column_text(stmt1, 0), cleanup,
                  STATUS_DB_ERROR, "Failed to retrieve query string for table '%s'", schema->name);
     TRY_NOT_NULL(schema->sql = strdup(query_string), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to duplicate query string for table '%s'", schema->name);
@@ -344,32 +302,32 @@ status_t init_schema(Vfs2DbContext* ctx, Schema* schema) {
 cleanup:
     if (stmt)
         sqlite3_finalize(stmt);
-    if (static_stmt)
-        sqlite3_finalize(static_stmt);
+    if (stmt1)
+        sqlite3_finalize(stmt1);
     return status;
 }
 
-status_t record_exists(Vfs2DbContext* ctx, struct tokens* toks) {
-    LOG_TRACE("Checking if record exists: %s/%s", toks->table, toks->record);
+status_t record_exists(Vfs2DbContext* ctx, PathFieldsResult* fields) {
+    LOG_TRACE("Checking if record exists: %s/%s", fields->table, fields->record);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt;
 
-    TRY_NOT_NULL(
-        stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ROWID, toks->table),
-        cleanup, STATUS_DB_ERROR,
-        "Failed to build query statement for record existence check: '%s/%s'", toks->table,
-        toks->record);
+    TRY_NOT_NULL(stmt =
+                     qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ROWID, fields->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for record existence check: '%s/%s'",
+                 fields->table, fields->record);
 
     // Bind the record value to the query
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, fields->record, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup, "Failed to bind record value for existence check query: '%s/%s'",
-               toks->table, toks->record);
+               fields->table, fields->record);
 
     // Execute the query and check if a row is returned, which indicates that the record exists.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
-               "Failed to execute record existence check query for '%s/%s'", toks->table,
-               toks->record);
+               "Failed to execute record existence check query for '%s/%s'", fields->table,
+               fields->record);
 
 cleanup:
     if (stmt)
@@ -377,37 +335,38 @@ cleanup:
     return status;
 }
 
-status_t get_attribute_all_bytes(Vfs2DbContext* ctx, struct tokens* toks, char** bytes,
+status_t get_attribute_all_bytes(Vfs2DbContext* ctx, PathFieldsResult* fields, char** bytes,
                                  size_t* size) {
     ensure_arena_init();
 
-    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", fields->table, fields->record,
+              fields->attribute);
 
     status_t      status = STATUS_OK;
-    sqlite3_stmt* stmt;
+    sqlite3_stmt* stmt   = NULL;
 
     // Build the statement
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ATTRIBUTE,
-                                                         toks->attribute, toks->table),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ATTRIBUTE,
+                                                 fields->attribute, fields->table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for getting all attribute bytes: '%s/%s/%s'",
-                 toks->table, toks->record, toks->attribute);
+                 fields->table, fields->record, fields->attribute);
 
     // Bind the record value to the query
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, fields->record, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup,
                "Failed to bind record value for getting all attribute bytes: '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+               fields->table, fields->record, fields->attribute);
 
     // Execute the query and check if a row is returned
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
                "Failed to execute query for getting all attribute bytes for '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+               fields->table, fields->record, fields->attribute);
 
     // Retrieve the attribute data from the query result and calculate its size in bytes.
     TRY_NOT_NULL(*bytes = (char*)sqlite3_column_blob(stmt, 0), cleanup, STATUS_ISNULL,
-                 "Failed to retrieve attribute data for '%s/%s/%s'", toks->table, toks->record,
-                 toks->attribute);
+                 "Failed to retrieve attribute data for '%s/%s/%s'", fields->table, fields->record,
+                 fields->attribute);
 
     // Arena_strdup the bytes to ensure they are stored in the thread-local arena for efficient
     // memory management.
@@ -415,8 +374,8 @@ status_t get_attribute_all_bytes(Vfs2DbContext* ctx, struct tokens* toks, char**
     *size = (size_t)sqlite3_column_bytes(stmt, 0);
 
     TRY_NOT_NULL(blob_data = calloc(1, *size + 1), cleanup, STATUS_ALLOC_ERROR,
-                 "Failed to duplicate attribute data for '%s/%s/%s'", toks->table, toks->record,
-                 toks->attribute);
+                 "Failed to duplicate attribute data for '%s/%s/%s'", fields->table, fields->record,
+                 fields->attribute);
 
     memcpy(blob_data, *bytes, *size);
     blob_data[*size] = '\0'; // Null-terminate the data for safe string operations
@@ -430,31 +389,31 @@ cleanup:
     return status;
 }
 
-status_t get_attribute_size(Vfs2DbContext* ctx, struct tokens* toks, size_t* size) {
+status_t get_attribute_size(Vfs2DbContext* ctx, PathFieldsResult* fields, size_t* size) {
     ensure_arena_init();
 
-    LOG_TRACE("Getting attribute size: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_TRACE("Getting attribute size: %s/%s/%s", fields->table, fields->record, fields->attribute);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt;
 
     // Build the statement
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                     ctx->db_conn, QUERY_TPL_SELECT_ATTRIBUTE_SIZE, toks->attribute, toks->table),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ATTRIBUTE_SIZE,
+                                                 fields->attribute, fields->table),
                  cleanup, STATUS_DB_ERROR,
-                 "Failed to build query statement for attribute size: '%s/%s/%s'", toks->table,
-                 toks->record, toks->attribute);
+                 "Failed to build query statement for attribute size: '%s/%s/%s'", fields->table,
+                 fields->record, fields->attribute);
 
     // Bind the record value to the query
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, fields->record, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup,
-               "Failed to bind record value for attribute size query: '%s/%s/%s'", toks->table,
-               toks->record, toks->attribute);
+               "Failed to bind record value for attribute size query: '%s/%s/%s'", fields->table,
+               fields->record, fields->attribute);
 
     // Execute the query and check if a row is returned
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
-               "Failed to execute attribute size query for '%s/%s/%s'", toks->table, toks->record,
-               toks->attribute);
+               "Failed to execute attribute size query for '%s/%s/%s'", fields->table,
+               fields->record, fields->attribute);
 
     // Calculate the bytes of the attribute
     *size = sqlite3_column_int(stmt, 0);
@@ -465,47 +424,39 @@ cleanup:
     return status;
 }
 
-status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, struct tokens* toks, off_t offset,
+status_t get_attribute_chunk_bytes(Vfs2DbContext* ctx, PathFieldsResult* fields, off_t offset,
                                    char** bytes, size_t size) {
     ensure_arena_init();
 
-    LOG_TRACE("Getting attribute chunk bytes: %s/%s/%s, offset=%ld", toks->table, toks->record,
-              toks->attribute, offset);
+    LOG_TRACE("Getting attribute chunk bytes: %s/%s/%s, offset=%ld", fields->table, fields->record,
+              fields->attribute, offset);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
     char*         data   = NULL;
 
     // Build the statement
-    TRY_NOT_NULL(
-        stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE,
-                                                toks->attribute, offset, size, toks->table),
-        cleanup, STATUS_DB_ERROR,
-        "Failed to build query statement for attribute chunk bytes: '%s/%s/%s'", toks->table,
-        toks->record, toks->attribute);
-
-    LOG_TRACE("Dynamic query built");
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_CHUNK_ATTRIBUTE,
+                                                 fields->attribute, offset, size, fields->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for attribute chunk bytes: '%s/%s/%s'",
+                 fields->table, fields->record, fields->attribute);
 
     // Bind the record value to the query
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, fields->record, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup, "Failed to bind record value for chunk query: '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
-
-    LOG_TRACE("Dynamic query binded");
+               fields->table, fields->record, fields->attribute);
 
     // Execute the query and check if a row is returned
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
-               "Failed to execute chunk query for '%s/%s/%s'", toks->table, toks->record,
-               toks->attribute);
-
-    LOG_TRACE("Dynamic query executed");
+               "Failed to execute chunk query for '%s/%s/%s'", fields->table, fields->record,
+               fields->attribute);
 
     // Retrieve the attribute chunk data from the query result and calculate its size in bytes.
     TRY_NOT_NULL(data = (char*)sqlite3_column_blob(stmt, 0), cleanup, STATUS_DB_ERROR,
-                 "Failed to retrieve attribute chunk data for '%s/%s/%s'", toks->table,
-                 toks->record, toks->attribute);
+                 "Failed to retrieve attribute chunk data for '%s/%s/%s'", fields->table,
+                 fields->record, fields->attribute);
 
-    // LOG_TRACE("Data: %s", data);
     memcpy(*bytes, data, size);
 
 cleanup:
@@ -515,32 +466,33 @@ cleanup:
     return status;
 }
 
-status_t is_attribute_null(Vfs2DbContext* ctx, struct tokens* toks, bool* is_null) {
-    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", toks->table, toks->record, toks->attribute);
+status_t is_attribute_null(Vfs2DbContext* ctx, PathFieldsResult* fields, bool* is_null) {
+    LOG_TRACE("Getting all attribute bytes: %s/%s/%s", fields->table, fields->record,
+              fields->attribute);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
     // Build the statement to check if the specified attribute value is NULL for the given record in
     // the specified table, using the QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL template.
-    TRY_NOT_NULL(
-        stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL,
-                                                toks->attribute, toks->attribute, toks->table),
-        cleanup, STATUS_DB_ERROR,
-        "Failed to build query statement for checking if attribute is NULL: '%s/%s/%s'",
-        toks->table, toks->record, toks->attribute);
+    TRY_NOT_NULL(stmt =
+                     qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL,
+                                              fields->attribute, fields->attribute, fields->table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for checking if attribute is NULL: '%s/%s/%s'",
+                 fields->table, fields->record, fields->attribute);
 
     // Bind the record value to the query to specify which record's attribute value to retrieve.
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, fields->record, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup,
                "Failed to bind record value for getting all attribute bytes: '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+               fields->table, fields->record, fields->attribute);
 
     // Execute the query and check if a row is returned, indicating that the attribute value was
     // successfully retrieved.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_ROW, cleanup,
                "Failed to execute query for checking if attribute is NULL for '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+               fields->table, fields->record, fields->attribute);
 
     *is_null = sqlite3_column_int(stmt, 0);
 
@@ -550,21 +502,21 @@ cleanup:
     return status;
 }
 
-status_t get_attribute_type(Vfs2DbContext* ctx, struct tokens* toks, int* type) {
-    LOG_TRACE("Getting attribute type: %s/%s/%s", toks->table, toks->record, toks->attribute);
+status_t get_attribute_type(Vfs2DbContext* ctx, PathFieldsResult* fields, int* type) {
+    LOG_TRACE("Getting attribute type: %s/%s/%s", fields->table, fields->record, fields->attribute);
 
     status_t status       = STATUS_OK;
     Schema*  table_schema = NULL;
 
     // Find the schema for the specified table in the database schema.
-    TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, toks->table), cleanup,
-                 STATUS_DB_ERROR, "Table '%s' not found in schema", toks->table);
+    TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, fields->table), cleanup,
+                 STATUS_DB_ERROR, "Table '%s' not found in schema", fields->table);
 
     // Check if the specified attribute is a foreign key, primary key, or normal attribute.
     void* attribute;
 
     // First, check if it's a foreign key
-    attribute = find_fk_by_name(table_schema, toks->attribute);
+    attribute = find_fk_by_name(table_schema, fields->attribute);
     if (attribute) {
         Fk* attr = (Fk*)attribute;
         *type    = attr->sqlite_type;
@@ -572,7 +524,7 @@ status_t get_attribute_type(Vfs2DbContext* ctx, struct tokens* toks, int* type) 
     }
 
     // Check if it's a primary key
-    attribute = find_pk_by_name(table_schema, toks->attribute);
+    attribute = find_pk_by_name(table_schema, fields->attribute);
     if (attribute) {
         Pk* attr = (Pk*)attribute;
         *type    = attr->sqlite_type;
@@ -580,12 +532,12 @@ status_t get_attribute_type(Vfs2DbContext* ctx, struct tokens* toks, int* type) 
     }
 
     // Finally, check if it's a normal attribute
-    attribute = find_attribute_by_name(table_schema, toks->attribute);
+    attribute = find_attribute_by_name(table_schema, fields->attribute);
     if (attribute) {
         Attr* attr = (Attr*)attribute;
         *type      = attr->sqlite_type;
-        LOG_TRACE("Attribute type for '%s/%s/%s': %d", toks->table, toks->record, toks->attribute,
-                  *type);
+        LOG_TRACE("Attribute type for '%s/%s/%s': %d", fields->table, fields->record,
+                  fields->attribute, *type);
         return STATUS_OK;
     }
 
@@ -639,12 +591,12 @@ static inline status_t bind_attribute_value(Vfs2DbContext* ctx, sqlite3_stmt* st
     return STATUS_OK;
 }
 
-status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const char* buffer,
+status_t update_attribute_value(Vfs2DbContext* ctx, PathFieldsResult* fields, const char* buffer,
                                 size_t size, off_t offset) {
     ensure_arena_init();
 
-    LOG_TRACE("Updating attribute value: %s/%s/%s (size=%zu, offset=%ld)", toks->table,
-              toks->record, toks->attribute, size, offset);
+    LOG_TRACE("Updating attribute value: %s/%s/%s (size=%zu, offset=%ld)", fields->table,
+              fields->record, fields->attribute, size, offset);
 
     status_t      status      = STATUS_OK;
     sqlite3_stmt* stmt        = NULL;
@@ -654,9 +606,9 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
     int           type;
 
     // Determine the SQLite data type of the attribute to decide how to perform the update.
-    TRY(get_attribute_type(ctx, toks, &type), cleanup,
-        "Failed to get attribute type for update of '%s/%s/%s'", toks->table, toks->record,
-        toks->attribute);
+    TRY(get_attribute_type(ctx, fields, &type), cleanup,
+        "Failed to get attribute type for update of '%s/%s/%s'", fields->table, fields->record,
+        fields->attribute);
 
     // If the attribute is of type BLOB, we can use the SQLite Blob I/O API to perform
     // in-place updates without needing to read the entire value into memory. This allows for
@@ -665,9 +617,9 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
     if (type == SQLITE_BLOB) {
         // Get current attribute size
         size_t current_size;
-        TRY(get_attribute_size(ctx, toks, &current_size), cleanup,
-            "Failed to get attribute size for update of '%s/%s/%s'", toks->table, toks->record,
-            toks->attribute);
+        TRY(get_attribute_size(ctx, fields, &current_size), cleanup,
+            "Failed to get attribute size for update of '%s/%s/%s'", fields->table, fields->record,
+            fields->attribute);
 
         size_t end_of_write = offset + size;
 
@@ -678,35 +630,35 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
             LOG_DEBUG("Expanding blob by %zu bytes (current=%zu, needed=%zu)", expand_by,
                       current_size, end_of_write);
 
-            TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                             ctx->db_conn, QUERY_TPL_UPDATE_ZERO_BLOB, toks->table, toks->attribute,
-                             toks->attribute),
+            TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_UPDATE_ZERO_BLOB,
+                                                         fields->table, fields->attribute,
+                                                         fields->attribute),
                          cleanup, STATUS_DB_ERROR,
                          "Failed to build query statement for blob expansion of '%s/%s/%s'",
-                         toks->table, toks->record, toks->attribute);
+                         fields->table, fields->record, fields->attribute);
 
             TRY_SQLITE(ctx->db_conn, sqlite3_bind_zeroblob(stmt, 1, (int)expand_by), SQLITE_OK,
                        cleanup, "Failed to bind expand size for blob expansion of '%s/%s/%s'",
-                       toks->table, toks->record, toks->attribute);
+                       fields->table, fields->record, fields->attribute);
 
-            TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT),
-                       SQLITE_OK, cleanup,
-                       "Failed to bind record value for blob expansion of '%s/%s/%s'", toks->table,
-                       toks->record, toks->attribute);
+            TRY_SQLITE(ctx->db_conn,
+                       sqlite3_bind_text(stmt, 2, fields->record, -1, SQLITE_TRANSIENT), SQLITE_OK,
+                       cleanup, "Failed to bind record value for blob expansion of '%s/%s/%s'",
+                       fields->table, fields->record, fields->attribute);
 
             TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
-                       "Failed to execute blob expansion for '%s/%s/%s'", toks->table, toks->record,
-                       toks->attribute);
+                       "Failed to execute blob expansion for '%s/%s/%s'", fields->table,
+                       fields->record, fields->attribute);
 
             LOG_DEBUG("Blob expanded successfully to %zu bytes", end_of_write);
         }
 
         // Now write the data in-place using the Blob I/O API
         TRY_SQLITE(ctx->db_conn,
-                   sqlite3_blob_open(ctx->db_conn, "main", toks->table, toks->attribute,
-                                     atoll(toks->record), 1, &blob_handle),
-                   SQLITE_OK, cleanup, "Failed to open blob handle for '%s/%s/%s': %s", toks->table,
-                   toks->record, toks->attribute, sqlite3_errmsg(ctx->db_conn));
+                   sqlite3_blob_open(ctx->db_conn, "main", fields->table, fields->attribute,
+                                     atoll(fields->record), 1, &blob_handle),
+                   SQLITE_OK, cleanup, "Failed to open blob handle for '%s/%s/%s': %s",
+                   fields->table, fields->record, fields->attribute, sqlite3_errmsg(ctx->db_conn));
 
         TRY_SQLITE(ctx->db_conn, sqlite3_blob_write(blob_handle, buffer, (int)size, (int)offset),
                    SQLITE_OK, cleanup, "Failed to write to blob: %s", sqlite3_errmsg(ctx->db_conn));
@@ -720,19 +672,19 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
     else {
         // Read all the attribute bytes
         size_t   bytes_size;
-        status_t read_status = get_attribute_all_bytes(ctx, toks, &bytes, &bytes_size);
+        status_t read_status = get_attribute_all_bytes(ctx, fields, &bytes, &bytes_size);
 
         // If the attribute value is NULL, we treat it as an empty string for the purpose of the
         // update. This allows us to apply the update correctly even when the existing value is
         // NULL.
         if (read_status == STATUS_ISNULL) {
             LOG_DEBUG("Attribute value is NULL, treating as empty for update of '%s/%s/%s'",
-                      toks->table, toks->record, toks->attribute);
+                      fields->table, fields->record, fields->attribute);
             bytes      = strdup("");
             bytes_size = 0;
         } else if (read_status != STATUS_OK) {
             LOG_ERROR("Failed to read existing attribute value for update of '%s/%s/%s'",
-                      toks->table, toks->record, toks->attribute);
+                      fields->table, fields->record, fields->attribute);
             goto cleanup;
         }
 
@@ -743,33 +695,33 @@ status_t update_attribute_value(Vfs2DbContext* ctx, struct tokens* toks, const c
         // Allocate new buffer for the updated attribute value
         TRY_NOT_NULL(new_bytes = calloc(1, new_bytes_size + 1), cleanup, STATUS_ALLOC_ERROR,
                      "Failed to allocate buffer for updated attribute value for '%s/%s/%s'",
-                     toks->table, toks->record, toks->attribute);
+                     fields->table, fields->record, fields->attribute);
 
         // Copy existing bytes and patch with new data
         memcpy(new_bytes, bytes, bytes_size);
         memcpy(new_bytes + offset, buffer, size);
 
         // Write the new attribute bytes
-        TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                         ctx->db_conn, QUERY_TPL_UPDATE_ATTRIBUTE, toks->table, toks->attribute),
+        TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_UPDATE_ATTRIBUTE,
+                                                     fields->table, fields->attribute),
                      cleanup, STATUS_DB_ERROR,
                      "Failed to build query statement for attribute update of '%s/%s/%s'",
-                     toks->table, toks->record, toks->attribute);
+                     fields->table, fields->record, fields->attribute);
 
         // value based on its SQLite type
         TRY(bind_attribute_value(ctx, stmt, new_bytes, type), cleanup,
-            "Failed to bind new attribute value for update of '%s/%s/%s'", toks->table,
-            toks->record, toks->attribute);
+            "Failed to bind new attribute value for update of '%s/%s/%s'", fields->table,
+            fields->record, fields->attribute);
 
         // Bind the record ID for the WHERE clause
-        TRY_SQLITE(ctx->db_conn, sqlite3_bind_int64(stmt, 2, atoi(toks->record)), SQLITE_OK,
+        TRY_SQLITE(ctx->db_conn, sqlite3_bind_int64(stmt, 2, atoi(fields->record)), SQLITE_OK,
                    cleanup, "Failed to bind record value for attribute update of '%s/%s/%s'",
-                   toks->table, toks->record, toks->attribute);
+                   fields->table, fields->record, fields->attribute);
 
         // Execute the UPDATE statement
         TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
-                   "Failed to execute UPDATE query for attribute '%s/%s/%s'", toks->table,
-                   toks->record, toks->attribute);
+                   "Failed to execute UPDATE query for attribute '%s/%s/%s'", fields->table,
+                   fields->record, fields->attribute);
 
         int changes = sqlite3_changes(ctx->db_conn);
         LOG_DEBUG("Attribute updated successfully, %d rows affected", changes);
@@ -787,42 +739,42 @@ cleanup:
     return status;
 }
 
-status_t update_fk_value(Vfs2DbContext* ctx, struct tokens* toks_linkpath,
-                         struct tokens* toks_target) {
+status_t update_fk_value(Vfs2DbContext* ctx, PathFieldsResult* fields_linkpath,
+                         PathFieldsResult* fields_target) {
     ensure_arena_init();
 
-    LOG_TRACE("Updating FK value: %s/%s/%s -> %s", toks_linkpath->table, toks_linkpath->record,
-              toks_linkpath->attribute, toks_target->record);
+    LOG_TRACE("Updating FK value: %s/%s/%s -> %s", fields_linkpath->table, fields_linkpath->record,
+              fields_linkpath->attribute, fields_target->record);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
     // Build the UPDATE statement to set the specified foreign key attribute to the new value for
     // the given table and record using the QUERY_TPL_UPDATE_FK template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_UPDATE_ATTRIBUTE,
-                                                         toks_linkpath->table,
-                                                         toks_linkpath->attribute),
+    TRY_NOT_NULL(stmt =
+                     qm_build_query_statement(ctx->db_conn, QUERY_TPL_UPDATE_ATTRIBUTE,
+                                              fields_linkpath->table, fields_linkpath->attribute),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for updating FK value for '%s/%s/%s'",
-                 toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+                 fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     // Bind the new foreign key value to the statement based on its SQLite type.
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks_target->record, -1, SQLITE_TRANSIENT),
-               SQLITE_OK, cleanup,
-               "Failed to bind new FK value for updating FK value for '%s/%s/%s'",
-               toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+    TRY_SQLITE(ctx->db_conn,
+               sqlite3_bind_text(stmt, 1, fields_target->record, -1, SQLITE_TRANSIENT), SQLITE_OK,
+               cleanup, "Failed to bind new FK value for updating FK value for '%s/%s/%s'",
+               fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     // Bind the record ID for the WHERE clause to specify which record's foreign key value should be
     // updated.
     TRY_SQLITE(ctx->db_conn,
-               sqlite3_bind_text(stmt, 2, toks_linkpath->record, -1, SQLITE_TRANSIENT), SQLITE_OK,
+               sqlite3_bind_text(stmt, 2, fields_linkpath->record, -1, SQLITE_TRANSIENT), SQLITE_OK,
                cleanup, "Failed to bind record value for updating FK value for '%s/%s/%s'",
-               toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+               fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     // Execute the UPDATE statement to update the foreign key value for the specified record.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
                "Failed to execute UPDATE query for updating FK value for '%s/%s/%s'",
-               toks_linkpath->table, toks_linkpath->record, toks_linkpath->attribute);
+               fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     int changes = sqlite3_changes(ctx->db_conn);
     LOG_DEBUG("FK value updated successfully, %d rows affected", changes);
@@ -833,51 +785,53 @@ cleanup:
     return status;
 }
 
-status_t set_attribute_empty(Vfs2DbContext* ctx, struct tokens* toks) {
+status_t set_attribute_empty(Vfs2DbContext* ctx, PathFieldsResult* fields_linkpath) {
     ensure_arena_init();
 
-    LOG_TRACE("Setting attribute to empty: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_TRACE("Setting attribute to empty: %s/%s/%s", fields_linkpath->table,
+              fields_linkpath->record, fields_linkpath->attribute);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
     // Build the UPDATE statement to set the specified attribute to empty for the given table and
     // record using the QUERY_TPL_UPDATE_ATTRIBUTE template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_UPDATE_ATTRIBUTE,
-                                                         toks->table, toks->attribute),
+    TRY_NOT_NULL(stmt =
+                     qm_build_query_statement(ctx->db_conn, QUERY_TPL_UPDATE_ATTRIBUTE,
+                                              fields_linkpath->table, fields_linkpath->attribute),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for setting attribute to empty for '%s/%s/%s'",
-                 toks->table, toks->record, toks->attribute);
+                 fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     // NOTE: it should NOT nullify the field, because it can have a 'NOT NULL' constraint
     // Get the attribute type to bind the empty value correctly based on its SQLite type
     int type;
-    TRY(get_attribute_type(ctx, toks, &type), cleanup,
-        "Failed to get attribute type for setting attribute to empty for '%s/%s/%s'", toks->table,
-        toks->record, toks->attribute);
+    TRY(get_attribute_type(ctx, fields_linkpath, &type), cleanup,
+        "Failed to get attribute type for setting attribute to empty for '%s/%s/%s'",
+        fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     if (type == SQLITE_BLOB) {
         TRY_SQLITE(ctx->db_conn, sqlite3_bind_zeroblob(stmt, 1, 0), SQLITE_OK, cleanup,
                    "Failed to bind empty blob for setting attribute to empty for '%s/%s/%s'",
-                   toks->table, toks->record, toks->attribute);
+                   fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
     } else {
         TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, "", -1, SQLITE_TRANSIENT), SQLITE_OK,
                    cleanup,
                    "Failed to bind empty string for setting attribute to empty for '%s/%s/%s'",
-                   toks->table, toks->record, toks->attribute);
+                   fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
     }
 
     // Bind the record ID for the WHERE clause to specify which record's attribute value should be
     // set to empty.
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 2, toks->record, -1, SQLITE_TRANSIENT),
-               SQLITE_OK, cleanup,
-               "Failed to bind record value for setting attribute to empty for '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+    TRY_SQLITE(ctx->db_conn,
+               sqlite3_bind_text(stmt, 2, fields_linkpath->record, -1, SQLITE_TRANSIENT), SQLITE_OK,
+               cleanup, "Failed to bind record value for setting attribute to empty for '%s/%s/%s'",
+               fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     // Execute the UPDATE statement to set the attribute value to empty for the specified record.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
                "Failed to execute UPDATE query for setting attribute to empty for '%s/%s/%s'",
-               toks->table, toks->record, toks->attribute);
+               fields_linkpath->table, fields_linkpath->record, fields_linkpath->attribute);
 
     int changes = sqlite3_changes(ctx->db_conn);
     LOG_DEBUG("Attribute set to empty successfully, %d rows affected", changes);
@@ -898,10 +852,10 @@ status_t get_table_rowids(Vfs2DbContext* ctx, const char* table, char* records[]
 
     // Build the dynamic query statement to select all row IDs from the specified table using the
     // QUERY_TPL_SELECT_TABLE_ROWIDS template.
-    TRY_NOT_NULL(
-        stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_SELECT_TABLE_ROWIDS, table),
-        cleanup, STATUS_DB_ERROR,
-        "Failed to build query statement for selecting rowids of table '%s'", table);
+    TRY_NOT_NULL(stmt =
+                     qm_build_query_statement(ctx->db_conn, QUERY_TPL_SELECT_TABLE_ROWIDS, table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for selecting rowids of table '%s'", table);
 
     int record_count = 0;
 
@@ -934,8 +888,8 @@ status_t get_rowid_from_pks(Vfs2DbContext* ctx, const char* table, Fk* fks[], ch
 
     LOG_TRACE("Getting rowid from PKs for table: %s (num_fks=%d)", table, num_fks);
 
-    status_t      status = STATUS_OK;
-    sqlite3_stmt* pstmt;
+    status_t      status  = STATUS_OK;
+    sqlite3_stmt* pstmt   = NULL;
     int           str_len = 0;
     char          query_str[1024];
 
@@ -978,24 +932,24 @@ cleanup:
     return status;
 }
 
-status_t insert_record_into_table(Vfs2DbContext* ctx, struct tokens* toks) {
-    LOG_TRACE("Inserting record into table: %s/%s", toks->table, toks->record);
+status_t insert_record_into_table(Vfs2DbContext* ctx, PathFieldsResult* fields) {
+    LOG_TRACE("Inserting record into table: %s/%s", fields->table, fields->record);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
     // Build the dynamic query statement to insert a new record into the specified table using the
     // QUERY_TPL_INSERT_RECORD_INTO_TABLE template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                     ctx->db_conn, QUERY_TPL_INSERT_RECORD_INTO_TABLE, toks->table, toks->record),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_INSERT_RECORD_INTO_TABLE,
+                                                 fields->table, fields->record),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for inserting record into table: '%s/%s'",
-                 toks->table, toks->record);
+                 fields->table, fields->record);
 
     // Execute the INSERT statement to add the new record to the database.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
-               "Failed to execute query for inserting record into table: '%s/%s'", toks->table,
-               toks->record);
+               "Failed to execute query for inserting record into table: '%s/%s'", fields->table,
+               fields->record);
 
     // Check the number of rows affected by the INSERT operation to confirm that the record was
     // successfully inserted into the database.
@@ -1014,9 +968,9 @@ static inline status_t update_schema_sql(Vfs2DbContext* ctx, Schema* schema) {
     TRY_NOT_NULL(schema, cleanup, STATUS_ISNULL, "Schema is NULL for updating schema SQL");
 
     sqlite3_stmt* stmt = NULL;
-    TRY_NOT_NULL(
-        stmt = qm_get_static_query_statement(ctx->db_conn, QUERY_SELECT_TABLE_QUERY_STRING),
-        cleanup, STATUS_DB_ERROR, "Failed to get static query statement for updating schema SQL");
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_SELECT_TABLE_QUERY_STRING),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for updating schema SQL");
 
     TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, schema->name, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup, "Failed to bind table name '%s' to query statement",
@@ -1050,10 +1004,9 @@ status_t create_empty_table(Vfs2DbContext* ctx, const char* table) {
 
     // Build the dynamic query statement to create a new empty table with the specified name using
     // the QUERY_TPL_CREATE_EMPTY_TABLE template.
-    TRY_NOT_NULL(
-        stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_CREATE_EMPTY_TABLE, table),
-        cleanup, STATUS_DB_ERROR, "Failed to build query statement for creating empty table '%s'",
-        table);
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_CREATE_EMPTY_TABLE, table),
+                 cleanup, STATUS_DB_ERROR,
+                 "Failed to build query statement for creating empty table '%s'", table);
 
     // Execute the CREATE TABLE statement to add the new empty table to the database.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
@@ -1063,7 +1016,7 @@ status_t create_empty_table(Vfs2DbContext* ctx, const char* table) {
 
     // After creating the new empty table in the database, we need to update our in-memory schema
     // representation to include the new table.
-    Schema* new_schema;
+    Schema* new_schema = NULL;
     TRY_NOT_NULL(new_schema = malloc(sizeof(Schema)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate schema for new table '%s'", table);
 
@@ -1077,7 +1030,7 @@ status_t create_empty_table(Vfs2DbContext* ctx, const char* table) {
 
     // Since every table must have a primary key, we create a default primary key named "rowid" of
     // type INTEGER for the new table.
-    Pk* new_pk;
+    Pk* new_pk = NULL;
     TRY_NOT_NULL(new_pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate PK for new table '%s'", table);
     TRY_NOT_NULL(new_pk->name = strdup("rowid"), cleanup, STATUS_ALLOC_ERROR,
@@ -1106,7 +1059,7 @@ status_t drop_table(Vfs2DbContext* ctx, const char* table) {
 
     // Build the dynamic query statement to drop the specified table from the database using the
     // QUERY_TPL_DROP_TABLE template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_DROP_TABLE, table),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_DROP_TABLE, table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for dropping table '%s'", table);
 
@@ -1119,7 +1072,7 @@ status_t drop_table(Vfs2DbContext* ctx, const char* table) {
     // After dropping the specified table from the database, we need to update our in-memory schema
     // representation to remove the schema of the dropped table to ensure that our in-memory
     // representation of the database schema is consistent with the actual state of the database.
-    Schema* schema;
+    Schema* schema = NULL;
     TRY_NOT_NULL(schema = find_schema_by_name(ctx->db_schema, table), cleanup, STATUS_DB_ERROR,
                  "Schema for dropped table '%s' not found in schema representation", table);
     free_schema_content(schema);
@@ -1133,33 +1086,33 @@ cleanup:
     return status;
 }
 
-status_t delete_record_from_table(Vfs2DbContext* ctx, struct tokens* toks) {
-    LOG_TRACE("Deleting record from table: %s/%s", toks->table, toks->record);
+status_t delete_record_from_table(Vfs2DbContext* ctx, PathFieldsResult* fields) {
+    LOG_TRACE("Deleting record from table: %s/%s", fields->table, fields->record);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
     // Build the dynamic query statement to delete the specified record from the given table using
     // the QUERY_TPL_DELETE_RECORD_FROM_TABLE template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                     ctx->db_conn, QUERY_TPL_DELETE_RECORD_FROM_TABLE, toks->table),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_DELETE_RECORD_FROM_TABLE,
+                                                 fields->table),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for deleting record from table: '%s/%s'",
-                 toks->table, toks->record);
+                 fields->table, fields->record);
 
     // Bind the record value to the statement to specify which record should be deleted from the
     // database table.
-    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, toks->record, -1, SQLITE_TRANSIENT),
+    TRY_SQLITE(ctx->db_conn, sqlite3_bind_text(stmt, 1, fields->record, -1, SQLITE_TRANSIENT),
                SQLITE_OK, cleanup,
-               "Failed to bind record value for deleting record from table: '%s/%s'", toks->table,
-               toks->record);
+               "Failed to bind record value for deleting record from table: '%s/%s'", fields->table,
+               fields->record);
 
     // Execute the DELETE statement to remove the specified record from the database.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
-               "Failed to execute query for deleting record from table: '%s/%s'", toks->table,
-               toks->record);
+               "Failed to execute query for deleting record from table: '%s/%s'", fields->table,
+               fields->record);
 
-    LOG_DEBUG("Record deleted successfully: %s/%s", toks->table, toks->record);
+    LOG_DEBUG("Record deleted successfully: %s/%s", fields->table, fields->record);
 
 cleanup:
     if (stmt)
@@ -1167,46 +1120,47 @@ cleanup:
     return status;
 }
 
-status_t delete_schema_column(Vfs2DbContext* ctx, struct tokens* toks) {
+status_t delete_schema_column(Vfs2DbContext* ctx, PathFieldsResult* fields) {
     ensure_arena_init();
-    LOG_TRACE("Deleting schema column: %s/%s/%s", toks->table, toks->record, toks->attribute);
+    LOG_TRACE("Deleting schema column: %s/%s/%s", fields->table, fields->record, fields->attribute);
 
     status_t      status = STATUS_OK;
     sqlite3_stmt* stmt   = NULL;
 
-    DotSchemaTokens* ds_toks;
-    TRY(tokenize_dot_schema_column(arena, toks->attribute, &ds_toks), cleanup,
-        "Failed to parse dot schema tokens for attribute '%s'", toks->attribute);
+    DotSchemaFieldsResult* ds_fields = NULL;
+    TRY_NOT_NULL(ds_fields = parser_parse_dot_schema(arena, fields->attribute), cleanup,
+                 STATUS_ALLOC_ERROR, "Failed to parse dot schema tokens for attribute '%s'",
+                 fields->attribute);
 
     // Build the dynamic query statement to delete a column from the specified table using the
     // QUERY_TPL_DELETE_SCHEMA_COLUMN template.
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(ctx->db_conn, QUERY_TPL_DROP_SCHEMA_COLUMN,
-                                                         toks->table, ds_toks->column_name),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_DROP_SCHEMA_COLUMN,
+                                                 fields->table, ds_fields->column_name),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for deleting schema column '%s/%s/%s'",
-                 toks->table, toks->record, ds_toks->column_name);
+                 fields->table, fields->record, ds_fields->column_name);
 
     // Execute the ALTER TABLE statement to delete the specified column from the database table.
     TRY_SQLITE(ctx->db_conn, sqlite3_step(stmt), SQLITE_DONE, cleanup,
-               "Failed to execute query for deleting schema column '%s/%s/%s'", toks->table,
-               toks->record, ds_toks->column_name);
+               "Failed to execute query for deleting schema column '%s/%s/%s'", fields->table,
+               fields->record, ds_fields->column_name);
 
-    LOG_DEBUG("Schema column deleted successfully: %s/%s/%s", toks->table, toks->record,
-              ds_toks->column_name);
+    LOG_DEBUG("Schema column deleted successfully: %s/%s/%s", fields->table, fields->record,
+              ds_fields->column_name);
 
     // After deleting the column from the database table, we need to update our in-memory schema
     // representation to reflect the change by removing the corresponding attribute from the schema
     // of the affected table.
-    Schema* table_schema;
-    TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, toks->table), cleanup,
+    Schema* table_schema = NULL;
+    TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, fields->table), cleanup,
                  STATUS_DB_ERROR, "Table '%s' not found in schema for deleting column",
-                 toks->table);
-    remove_attribute_from_schema(table_schema, ds_toks->column_name);
-    remove_pk_from_schema(table_schema, ds_toks->column_name);
-    remove_fk_from_schema(table_schema, ds_toks->column_name);
+                 fields->table);
+    remove_attribute_from_schema(table_schema, ds_fields->column_name);
+    remove_pk_from_schema(table_schema, ds_fields->column_name);
+    remove_fk_from_schema(table_schema, ds_fields->column_name);
     update_schema_sql(ctx, table_schema);
-    LOG_DEBUG("Schema updated to remove attribute '%s' from table '%s'", ds_toks->column_name,
-              toks->table);
+    LOG_DEBUG("Schema updated to remove attribute '%s' from table '%s'", ds_fields->column_name,
+              fields->table);
 
 cleanup:
     if (stmt)
@@ -1224,8 +1178,8 @@ status_t add_pk_to_table(Vfs2DbContext* ctx, const char* table, const char* pk_n
 
     // Build the dynamic query statement to add a primary key column to the specified table using
     // ALTER TABLE new_table ADD id INTEGER PRIMARY KEY
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                     ctx->db_conn, QUERY_TPL_ADD_PRIMARY_KEY_COLUMN, table, pk_name, pk_type),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_ADD_PRIMARY_KEY_COLUMN,
+                                                 table, pk_name, pk_type),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for adding PK column '%s' to table '%s'", pk_name,
                  table);
@@ -1236,18 +1190,18 @@ status_t add_pk_to_table(Vfs2DbContext* ctx, const char* table, const char* pk_n
 
     // Update the schema in-memory representation to include the new primary key for the specified
     // table
-    Schema* table_schema;
+    Schema* table_schema = NULL;
     TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, table), cleanup,
                  STATUS_DB_ERROR, "Table '%s' not found in schema for adding PK", table);
 
-    Pk* new_pk;
+    Pk* new_pk = NULL;
     TRY_NOT_NULL(new_pk = malloc(sizeof(Pk)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate PK for new PK '%s' in table '%s'", pk_name, table);
 
     TRY_NOT_NULL(new_pk->name = strdup(pk_name), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate name for new PK '%s' in table '%s'", pk_name, table);
 
-    new_pk->sqlite_type = parse_sqlite_type(pk_type);
+    new_pk->sqlite_type = sqlite_str_to_type(pk_type);
 
     add_pk_to_schema(table_schema, new_pk);
     update_schema_sql(ctx, table_schema);
@@ -1270,8 +1224,8 @@ status_t add_attribute_to_table(Vfs2DbContext* ctx, const char* table, const cha
 
     // Build the dynamic query statement to add a primary key column to the specified table using
     // ALTER TABLE new_table ADD name TEXT
-    TRY_NOT_NULL(stmt = qm_build_dynamic_query_statement(
-                     ctx->db_conn, QUERY_TPL_ADD_ATTRIBUTE_COLUMN, table, attr_name, attr_type),
+    TRY_NOT_NULL(stmt = qm_build_query_statement(ctx->db_conn, QUERY_TPL_ADD_ATTRIBUTE_COLUMN,
+                                                 table, attr_name, attr_type),
                  cleanup, STATUS_DB_ERROR,
                  "Failed to build query statement for adding attribute '%s' to table '%s'",
                  attr_name, table);
@@ -1282,11 +1236,11 @@ status_t add_attribute_to_table(Vfs2DbContext* ctx, const char* table, const cha
 
     // Update the schema in-memory representation to include the new primary key for the specified
     // table
-    Schema* table_schema;
+    Schema* table_schema = NULL;
     TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, table), cleanup,
                  STATUS_DB_ERROR, "Table '%s' not found in schema for adding PK", table);
 
-    Attr* new_attr;
+    Attr* new_attr = NULL;
     TRY_NOT_NULL(new_attr = malloc(sizeof(Attr)), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate attribute for new attribute '%s' in table '%s'", attr_name,
                  table);
@@ -1294,7 +1248,7 @@ status_t add_attribute_to_table(Vfs2DbContext* ctx, const char* table, const cha
     TRY_NOT_NULL(new_attr->name = strdup(attr_name), cleanup, STATUS_ALLOC_ERROR,
                  "Failed to allocate name for new attribute '%s' in table '%s'", attr_name, table);
 
-    new_attr->sqlite_type = parse_sqlite_type(attr_type);
+    new_attr->sqlite_type = sqlite_str_to_type(attr_type);
 
     add_attribute_to_schema(table_schema, new_attr);
     update_schema_sql(ctx, table_schema);
@@ -1316,37 +1270,38 @@ status_t add_fk_to_table(Vfs2DbContext* ctx, const char* table, const char* fk_f
     sqlite3_stmt* stmt   = NULL;
 
     // Get the table schema
-    Schema* table_schema;
+    Schema* table_schema = NULL;
     TRY_NOT_NULL(table_schema = find_schema_by_name(ctx->db_schema, table), cleanup,
                  STATUS_DB_ERROR, "Table '%s' not found in schema for adding FK", table);
 
     // Get the referenced table schema to find the type of the referenced PK
-    Schema* ref_table_schema;
+    Schema* ref_table_schema = NULL;
     TRY_NOT_NULL(ref_table_schema = find_schema_by_name(ctx->db_schema, fk_table), cleanup,
                  STATUS_DB_ERROR,
                  "Referenced table '%s' not found in schema for adding FK '%s' to table '%s'",
                  fk_table, fk_from, table);
 
-    Pk* ref_pk;
+    Pk* ref_pk = NULL;
     TRY_NOT_NULL(ref_pk = find_pk_by_name(ref_table_schema, fk_to), cleanup, STATUS_DB_ERROR,
-                 "Referenced PK '%s' not found in schema for adding FK '%s' to table '%s'", fk_to,
-                 fk_from, table);
+                 "Referenced PK '%s' not found in schema of table '%s' for adding FK '%s' to table "
+                 "'%s'",
+                 fk_to, fk_table, fk_from, table);
 
     // Build the new sql create query
-    char* end_sql;
-    TRY_NOT_NULL(end_sql = arena_strdup(arena, table_schema->sql), cleanup, STATUS_DB_ERROR,
-                 "Failed to find closing parenthesis in SQL for table '%s' when adding FK '%s'",
-                 table, fk_from);
+    char* end_sql = NULL;
+    TRY_NOT_NULL(end_sql = arena_strdup(arena, table_schema->sql), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate SQL string for table '%s' when adding FK '%s'", table,
+                 fk_from);
 
     end_sql[strlen(table_schema->sql) - 1] = '\0'; // remove trailing );
 
-    char* new_table_sql;
+    char* new_table_sql = NULL;
     TRY_NOT_NULL(new_table_sql = arena_calloc(arena, 1, strlen(end_sql) + 1024), cleanup,
                  STATUS_ALLOC_ERROR, "Failed to allocate new SQL for adding FK '%s' to table '%s'",
                  fk_from, table);
 
     snprintf(new_table_sql, strlen(end_sql) + 1024, "%s, %s %s REFERENCES %s(%s));", end_sql,
-             fk_from, get_sqlitetype_from_int(ref_pk->sqlite_type), fk_table, fk_to);
+             fk_from, sqlite_type_to_str(ref_pk->sqlite_type), fk_table, fk_to);
 
     LOG_TRACE("New SQL for table '%s' with added FK: %s", table, new_table_sql);
 

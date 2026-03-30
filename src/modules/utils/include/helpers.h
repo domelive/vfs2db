@@ -25,9 +25,10 @@
 #define HELPERS_H
 
 #include <assert.h>
+#include <sqlite3.h>
 #include <stdbool.h>
 
-#include "types.h"
+#include "logger.h"
 #include "uthash.h"
 
 // =============================================================
@@ -47,473 +48,57 @@
          _once_##current; _once_##current = NULL)                                                  \
     HASH_ITER(hh, head, current, _tmp_##current)
 
-// =============================================================
-// Helper Functions for DbSchema and Schema
-// =============================================================
-
 /**
- * find_schema_by_name
+ * sqlite_str_to_type
  *
- * @brief Retrieve Schema by Name
+ * @brief Parses a SQLite column type string and determines the corresponding SQLite type affinity.
  *
- * @param[in] db_schema Pointer to the DbSchema structure containing all table schemas
- * @param[in] name      The name of the table whose schema is to be retrieved
+ * SQLite uses type affinity to determine how to store and compare values in a column, based on the
+ * declared type of the column. This function analyzes the type string and returns the appropriate
+ * SQLite type affinity constant (e.g., SQLITE_INTEGER, SQLITE_TEXT, SQLITE_BLOB, SQLITE_FLOAT)
+ * based on the presence of certain keywords in the type string.
  *
- * @return Pointer to the Schema structure if found, NULL otherwise
+ * @return The SQLite type affinity constant corresponding to the given type string
  */
-static inline Schema* find_schema_by_name(DbSchema* db_schema, const char* name) {
-    Schema* s;
-    HASH_FIND_STR(db_schema->tables_head, name, s);
-    return s;
-}
+static inline int sqlite_str_to_type(const char* typestr) {
+    LOG_TRACE("Parsing SQLITE type...");
 
-/**
- * add_schema
- *
- * @brief Add Schema to DbSchema
- *
- * @param[in,out] db_schema     Pointer to the DbSchema structure to which the schema will be added
- * @param[in]     table_schema  Pointer to the Schema structure to add
- *
- * @todo consider adding the TRY macro to handle error cases, such as memory allocation failure or
- * duplicate schema name.
- */
-static inline void add_schema(DbSchema* db_schema, Schema* table_schema) {
-    Schema* existing_schema = find_schema_by_name(db_schema, table_schema->name);
-    if (existing_schema != NULL) {
-        return;
-    }
-    HASH_ADD_STR(db_schema->tables_head, name, table_schema);
-}
-
-/**
- * count_schemas
- *
- * @brief Count the number of schemas in DbSchema
- *
- * @param[in] db_schema Pointer to the DbSchema structure containing all table schemas
- *
- * @return The number of schemas in the DbSchema
- */
-static inline int count_schemas(DbSchema* db_schema) { return HASH_COUNT(db_schema->tables_head); }
-
-// ============================================================
-// Helper Functions for Foreign Keys
-// ============================================================
-
-/**
- * find_fk_by_name
- *
- * @brief Retrieve Foreign Key by 'from' Attribute Name
- *
- * @param[in] schema Pointer to the Schema structure containing foreign keys
- * @param[in] from   The 'from' attribute name of the foreign key to retrieve
- *
- * @return Pointer to the Fk structure if found, NULL otherwise
- */
-static inline Fk* find_fk_by_name(Schema* schema, const char* from) {
-    if (!from) {
-        LOG_TRACE("find_fk_by_name: 'from' parameter is NULL");
-        return NULL;
+    if (!typestr) {
+        LOG_TRACE("Column has no type affinity, defaulting to TEXT");
+        return SQLITE_TEXT;
     }
 
-    Fk* fk;
-    HASH_FIND_STR(schema->fks_head, from, fk);
-
-    return fk;
-}
-
-/**
- * find_pk_by_name
- *
- * @brief Retrieve Primary Key by Name
- *
- * @param[in] schema Pointer to the Schema structure containing primary keys
- * @param[in] name   The name of the primary key to retrieve
- *
- * @return Pointer to the Pk structure if found, NULL otherwise
- */
-static inline Pk* find_pk_by_name(Schema* schema, const char* name) {
-    if (!name) {
-        LOG_TRACE("find_pk_by_name: 'name' parameter is NULL");
-        return NULL;
+    if (strcasestr(typestr, "INT")) {
+        LOG_TRACE("Column type '%s' has INTEGER affinity", typestr);
+        return SQLITE_INTEGER;
     }
 
-    Pk* pk;
-    HASH_FIND_STR(schema->pk_head, name, pk);
-
-    return pk;
-}
-
-/**
- * find_attribute_by_name
- *
- * @brief Retrieve Attribute by Name
- *
- * @param[in] schema Pointer to the Schema structure containing attributes
- * @param[in] name   The name of the attribute to retrieve
- *
- * @return Pointer to the Attr structure if found, NULL otherwise
- */
-static inline Attr* find_attribute_by_name(Schema* schema, const char* name) {
-    if (!name) {
-        LOG_TRACE("find_attribute_by_name: 'name' parameter is NULL");
-        return NULL;
+    if (strcasestr(typestr, "CHAR") || strcasestr(typestr, "CLOB") || strcasestr(typestr, "TEXT")) {
+        LOG_TRACE("Column type '%s' has TEXT affinity", typestr);
+        return SQLITE_TEXT;
     }
 
-    Attr* attr;
-    HASH_FIND_STR(schema->attr_head, name, attr);
-
-    return attr;
-}
-
-/**
- * add_fk
- *
- * @brief Add Foreign Key to Schema
- *
- * @param[in,out] schema Pointer to the Schema structure to which the foreign key will be added
- * @param[in]     fk     Pointer to the Fk structure to add
- */
-static inline void add_fk_to_schema(Schema* schema, Fk* fk) {
-    Fk* existing_fk = find_fk_by_name(schema, fk->from);
-    if (existing_fk != NULL)
-        return;
-    HASH_ADD_STR(schema->fks_head, from, fk);
-}
-
-/**
- * count_fks
- *
- * @brief Count the number of foreign keys in a Schema
- *
- * @param[in] schema Pointer to the Schema structure containing foreign keys
- *
- * @return The number of foreign keys in the Schema
- */
-static inline int count_fks(Schema* schema) { return HASH_COUNT(schema->fks_head); }
-
-// ============================================================
-// Helper Functions for Primary Key
-// ============================================================
-
-/**
- * is_pk_in_schema
- *
- * @brief Check if Primary Key Exists in Schema
- *
- * @param[in] schema   Pointer to the Schema structure
- * @param[in] pk_name  The name of the primary key to check
- *
- * @return true if the primary key exists in the schema, false otherwise
- */
-static inline bool is_pk_in_schema(Schema* schema, const char* pk_name) {
-    Pk* pk;
-    HASH_FIND_STR(schema->pk_head, pk_name, pk);
-    return (pk != NULL);
-}
-
-/**
- * is_fk_in_schema
- *
- * @brief Check if Foreign Key Exists in Schema
- *
- * @param[in] schema  Pointer to the Schema structure
- * @param[in] fk_from The 'from' attribute name of the foreign key to check
- *
- * @return true if the foreign key exists in the schema, false otherwise
- */
-static inline bool is_fk_in_schema(Schema* schema, const char* fk_from) {
-    Fk* fk;
-    HASH_FIND_STR(schema->fks_head, fk_from, fk);
-    return (fk != NULL);
-}
-
-/**
- * add_pk_to_schema
- *
- * @brief Add Primary Key to Schema
- *
- * @param[in,out] schema Pointer to the Schema structure to which the primary key will be added
- * @param[in]     pk     Pointer to the Pk structure to add
- */
-static inline void add_pk_to_schema(Schema* schema, Pk* pk) {
-    assert(!is_pk_in_schema(schema, pk->name));
-    HASH_ADD_STR(schema->pk_head, name, pk);
-}
-
-/**
- * count_pks
- *
- * @brief Count the number of primary keys in a Schema
- *
- * @param[in] schema Pointer to the Schema structure containing primary keys
- *
- * @return The number of primary keys in the Schema
- */
-static inline int count_pks(Schema* schema) { return HASH_COUNT(schema->pk_head); }
-
-// ============================================================
-// Helper Functions for Attributes
-// ============================================================
-
-/**
- * is_attribute_in_schema
- *
- * @brief Check if Attribute Exists in Schema
- *
- * @param[in] schema    Pointer to the Schema structure
- * @param[in] attr_name The name of the attribute to check
- *
- * @return true if the attribute exists in the schema, false otherwise
- */
-static inline bool is_attribute_in_schema(Schema* schema, const char* attr_name) {
-    Attr* attr;
-    HASH_FIND_STR(schema->attr_head, attr_name, attr);
-    return (attr != NULL);
-}
-
-/**
- * add_attribute_to_schema
- *
- * @brief Add Attribute to Schema
- *
- * @param[in] schema Pointer to the Schema structure to which the attribute will be added
- * @param[in] attr   Pointer to the Attr structure to add
- */
-static inline void add_attribute_to_schema(Schema* schema, Attr* attr) {
-    assert(!is_attribute_in_schema(schema, attr->name));
-    HASH_ADD_STR(schema->attr_head, name, attr);
-}
-
-/**
- * remove_attribute_from_schema
- *
- * @brief Remove Attribute from Schema
- *
- * @param[in,out] schema Pointer to the Schema structure from which the attribute will be removed
- * @param[in]     column_name The name of the attribute to remove
- */
-static inline void remove_attribute_from_schema(Schema* schema, const char* column_name) {
-    Attr* attr;
-    HASH_FIND_STR(schema->attr_head, column_name, attr);
-    if (attr) {
-        HASH_DEL(schema->attr_head, attr);
-        free(attr->name);
-        free(attr);
-    }
-}
-
-/**
- * remove_pk_from_schema
- *
- * @brief Remove Primary Key from Schema
- *
- * @param[in,out] schema Pointer to the Schema structure from which the primary key will be removed
- * @param[in]     pk_name  The name of the primary key to remove
- */
-static inline void remove_pk_from_schema(Schema* schema, const char* pk_name) {
-    Pk* pk;
-    HASH_FIND_STR(schema->pk_head, pk_name, pk);
-    if (pk) {
-        HASH_DEL(schema->pk_head, pk);
-        free(pk->name);
-        free(pk);
-    }
-}
-
-/**
- * remove_fk_from_schema
- *
- * @brief Remove Foreign Key from Schema
- *
- * @param[in,out] schema Pointer to the Schema structure from which the foreign key will be removed
- * @param[in]     fk_from The 'from' attribute name of the foreign key to remove
- */
-static inline void remove_fk_from_schema(Schema* schema, const char* fk_from) {
-    Fk* fk;
-    HASH_FIND_STR(schema->fks_head, fk_from, fk);
-    if (fk) {
-        HASH_DEL(schema->fks_head, fk);
-        free(fk->from);
-        free(fk->table);
-        free(fk->to);
-        free(fk);
-    }
-}
-
-/**
- * tokenize_dot_schema_column
- *
- * @brief Tokenize .schema Column Name into Components
- *
- * @param[in] arena       Pointer to the Arena structure for memory allocation
- * @param[in] column_name The name of the .schema column to tokenize, following the format:
- * name.TYPE.ATTR.vfs2db
- * @param[out] toks       Pointer to a DotSchemaTokens structure where the parsed components will be
- * stored
- *
- * @return status_t indicating success or failure of the tokenization process
- */
-static inline status_t tokenize_dot_schema_column(Arena* arena, const char* column_name,
-                                                  DotSchemaTokens** toks) {
-    status_t status = STATUS_OK;
-
-    // Allocate a new DotSchemaTokens structure to store the parsed components of the .schema column
-    // name, which follows the format: name.TYPE.ATTR.vfs2db
-    TRY_NOT_NULL(*toks = arena_calloc(arena, 1, sizeof(DotSchemaTokens)), cleanup,
-                 STATUS_ALLOC_ERROR, "Failed to allocate DotSchemaTokens for column '%s'",
-                 column_name);
-
-    // Tokenize the path using '/' as a delimiter
-    // First token is the table name
-    char* t              = strtok(column_name, ".");
-    (*toks)->column_name = t ? arena_strdup(arena, t) : NULL;
-
-    // Second token is the record name
-    t                    = strtok(NULL, ".");
-    (*toks)->column_type = t ? arena_strdup(arena, t) : NULL;
-
-    // Third token is the attribute name (we will remove the .vfs2db extension later if present)
-    t                    = strtok(NULL, ".");
-    (*toks)->column_spec = t ? arena_strdup(arena, t) : NULL;
-
-cleanup:
-    return status;
-}
-
-/**
- * count_attributes
- *
- * @brief Count the number of attributes in a Schema
- *
- * @param[in] schema Pointer to the Schema structure containing attributes
- *
- * @return The number of attributes in the Schema
- */
-static inline int count_attributes(Schema* schema) { return HASH_COUNT(schema->attr_head); }
-
-// =============================================================
-// Helper Functions for Freeing Structures
-// =============================================================
-
-/**
- * free_pk_set
- *
- * @brief Free Primary Key Set in Schema
- *
- * @param[in,out] schema Pointer to the Schema structure whose primary key set will be freed
- */
-static inline void free_pk_set(Schema* schema) {
-    if (!schema)
-        return;
-    HASH_FOREACH(current_pk, schema->pk_head) {
-        HASH_DEL(schema->pk_head, current_pk);
-        free(current_pk->name);
-        free(current_pk);
-    }
-}
-
-/**
- * free_attr_set
- *
- * @brief Free Attribute Set in Schema
- *
- * @param[in,out] schema Pointer to the Schema structure whose attribute set will be freed
- */
-static inline void free_attr_set(Schema* schema) {
-    if (!schema)
-        return;
-
-    HASH_FOREACH(current_attr, schema->attr_head) {
-        HASH_DEL(schema->attr_head, current_attr);
-        free(current_attr->name);
-        free(current_attr);
-    }
-}
-
-/**
- * free_fk_hashmap
- *
- * @brief Free Foreign Key Hashmap in Schema
- *
- * @param[in,out] schema Pointer to the Schema structure whose foreign key hashmap will be freed
- */
-static inline void free_fk_hashmap(Schema* schema) {
-    if (!schema)
-        return;
-
-    HASH_FOREACH(current_fk, schema->fks_head) {
-        HASH_DEL(schema->fks_head, current_fk);
-        free(current_fk->from);
-        free(current_fk->table);
-        free(current_fk->to);
-        free(current_fk);
-    }
-}
-
-// TODO: Consider merging free_fk_hashmap and free_schema_hashmap into a single function that can
-// free any hash map, given the appropriate free function for the elements.
-
-/**
- * free_schema_content
- *
- * @brief Free all content of a Schema, including primary keys, attributes, and foreign keys
- *
- * @param[in,out] schema Pointer to the Schema structure whose content will be freed
- */
-static inline void free_schema_content(Schema* schema) {
-    if (!schema)
-        return;
-
-    free_pk_set(schema);
-    free_attr_set(schema);
-    free_fk_hashmap(schema);
-}
-
-/**
- * remove_schema
- *
- * @brief Remove Schema from DbSchema
- *
- * @param[in,out] db_schema Pointer to the DbSchema structure from which the schema will be removed
- * @param[in]     schema    Pointer to the Schema structure to remove
- */
-static inline void remove_schema(DbSchema* db_schema, Schema* schema) {
-    if (!db_schema || !schema)
-        return;
-
-    HASH_DEL(db_schema->tables_head, schema);
-    free(schema->name);
-    free(schema);
-}
-
-/**
- * free_schema_hashmap
- *
- * @brief Free Foreign Key Hashmap in Schema
- *
- * @param[in,out] schema Pointer to the Schema structure whose foreign key hashmap will be freed
- *
- */
-static inline void free_schema_hashmap(DbSchema* schema) {
-    if (!schema)
-        return;
-
-    HASH_FOREACH(current_schema, schema->tables_head) {
-        free_schema_content(current_schema);
-        remove_schema(schema, current_schema);
+    if (strcasestr(typestr, "BLOB")) {
+        LOG_TRACE("Column type '%s' has BLOB affinity", typestr);
+        return SQLITE_BLOB;
     }
 
-    schema->tables_head = NULL;
+    if (strcasestr(typestr, "REAL") || strcasestr(typestr, "FLOA") || strcasestr(typestr, "DOUB")) {
+        LOG_TRACE("Column type '%s' has FLOAT affinity", typestr);
+        return SQLITE_FLOAT;
+    }
+
+    LOG_TRACE("Fallback to SQLITE_TEXT");
+
+    return SQLITE_TEXT;
 }
 
 /**
- * get_sqlitetype_from_int
+ * sqlite_type_to_str
  *
  * @brief Convert SQLite Type Integer to String Representation
  */
-static inline const char* get_sqlitetype_from_int(int sqlite_type) {
+static inline const char* sqlite_type_to_str(int sqlite_type) {
     switch (sqlite_type) {
     case SQLITE_INTEGER:
         return "INTEGER";
@@ -528,25 +113,6 @@ static inline const char* get_sqlitetype_from_int(int sqlite_type) {
     default:
         return "UNKNOWN";
     }
-}
-
-/**
- * count_char_occurrences
- *
- * @brief Count the number of occurrences of a character in a string
- *
- * @param[in] str The string to search
- * @param[in] c   The character to count
- *
- * @return The number of occurrences of the character in the string
- */
-static inline int count_char_occurrences(const char* str, char c) {
-    int count = 0;
-    for (const char* p = str; *p; p++) {
-        if (*p == c)
-            count++;
-    }
-    return count;
 }
 
 #endif // HELPERS_H

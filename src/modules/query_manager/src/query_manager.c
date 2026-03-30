@@ -23,6 +23,11 @@
 
 #include "query_manager.h"
 
+typedef enum QueryType {
+    QUERY_TYPE_SINGLE = 0, /**< Static query with a fixed SQL string */
+    QUERY_TYPE_MULTI  = 1, /**< Multi-statement query that may contain multiple SQL statements */
+} QueryType;
+
 /**
  * Query Structure
  *
@@ -30,22 +35,21 @@
  *
  * Includes the following fields:
  * - `sql`:        The SQL query string.
- * - `is_dynamic`: Flag indicating whether the query is dynamic (1) or static (0).
- * - `stmt`:       Pointer to a prepared SQLite statement (if applicable).
+ * - `type`:       The type of the query.
  */
-typedef struct query_t {
+typedef struct Query {
     const char* sql;
-    int type; // 0 for static, 1 for dynamic, 2 for multiple statement queries like transactions;
-} query_t;
+    QueryType   type;
+} Query;
 
-static query_t query_store[] = {
+static Query query_store[] = {
     [QUERY_SELECT_TABLES_NAME] = {"SELECT "
                                   "name "
                                   "FROM "
                                   "sqlite_master "
                                   "WHERE "
                                   "type='table' AND name NOT LIKE 'sqlite_%';",
-                                  0},
+                                  QUERY_TYPE_SINGLE},
 
     [QUERY_SELECT_TABLE_QUERY_STRING] = {"SELECT "
                                          "sql "
@@ -53,11 +57,11 @@ static query_t query_store[] = {
                                          "sqlite_master "
                                          "WHERE "
                                          "type='table' AND name = ?;",
-                                         0},
+                                         QUERY_TYPE_SINGLE},
 
-    [QUERY_GET_SCHEMA_VERSION] = {"PRAGMA schema_version;", 0},
+    [QUERY_GET_SCHEMA_VERSION] = {"PRAGMA schema_version;", QUERY_TYPE_SINGLE},
 
-    [QUERY_TPL_PRAGMA] = {"PRAGMA %s=%s;", 1},
+    [QUERY_TPL_PRAGMA] = {"PRAGMA %s=%s;", QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_TABLE_INFO] = {"SELECT "
                                      "ti.name AS column_name,"
@@ -71,7 +75,7 @@ static query_t query_store[] = {
                                      "LEFT JOIN "
                                      "pragma_foreign_key_list('%s') fk "
                                      "ON ti.name = fk.\"from\";",
-                                     1},
+                                     QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_FK_ID] = {"SELECT "
                                 "id "
@@ -79,7 +83,7 @@ static query_t query_store[] = {
                                 "pragma_foreign_key_list('%s') "
                                 "WHERE "
                                 "\"from\" = ? AND \"table\" = ? AND \"to\" = ?;",
-                                1},
+                                QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_ATTRIBUTE_IS_NULL] = {"SELECT "
                                             "%s IS NULL OR %s = '' "
@@ -87,7 +91,7 @@ static query_t query_store[] = {
                                             "%s "
                                             "WHERE "
                                             "rowid = ?",
-                                            1},
+                                            QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_ATTRIBUTE_SIZE] = {"SELECT "
                                          "LENGTH(%s) "
@@ -95,7 +99,7 @@ static query_t query_store[] = {
                                          "%s "
                                          "WHERE "
                                          "rowid = ?",
-                                         1},
+                                         QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_ATTRIBUTE] = {"SELECT "
                                     "%s "
@@ -103,7 +107,7 @@ static query_t query_store[] = {
                                     "%s "
                                     "WHERE "
                                     "rowid = ?",
-                                    1},
+                                    QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_CHUNK_ATTRIBUTE] = {"SELECT "
                                           "substr(%s, %ld + 1, %ld) "
@@ -111,7 +115,7 @@ static query_t query_store[] = {
                                           "%s "
                                           "WHERE "
                                           "rowid = ?",
-                                          1},
+                                          QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_UPDATE_ATTRIBUTE] = {"UPDATE "
                                     "%s "
@@ -119,20 +123,20 @@ static query_t query_store[] = {
                                     "%s = ? "
                                     "WHERE "
                                     "rowid = ?",
-                                    1},
+                                    QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_TABLE_ROWIDS] = {"SELECT "
                                        "rowid "
                                        "FROM "
                                        "%s",
-                                       1},
+                                       QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_SELECT_ROWID] = {"SELECT "
                                 "rowid "
                                 "FROM "
                                 "%s "
                                 "WHERE rowid = ?",
-                                1},
+                                QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_UPDATE_ZERO_BLOB] = {"UPDATE "
                                     "%s "
@@ -140,34 +144,34 @@ static query_t query_store[] = {
                                     "%s = CAST(IFNULL(%s, X'') || ? AS BLOB) "
                                     "WHERE "
                                     "rowid = ?",
-                                    1},
+                                    QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_INSERT_RECORD_INTO_TABLE] = {"INSERT INTO "
                                             "%s (rowid) "
                                             "VALUES (%s)",
-                                            1},
+                                            QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_CREATE_EMPTY_TABLE] = {"CREATE TABLE IF NOT EXISTS "
                                       "%s (rowid INTEGER PRIMARY KEY AUTOINCREMENT)",
-                                      1},
+                                      QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_DROP_SCHEMA_COLUMN] = {"ALTER TABLE "
                                       "%s "
                                       "DROP COLUMN "
                                       "%s",
-                                      1},
+                                      QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_ADD_PRIMARY_KEY_COLUMN] = {"ALTER TABLE "
                                           "%s "
                                           "ADD COLUMN "
                                           "%s %s PRIMARY KEY",
-                                          1},
+                                          QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_ADD_ATTRIBUTE_COLUMN] = {"ALTER TABLE "
                                         "%s "
                                         "ADD COLUMN "
                                         "%s %s",
-                                        1},
+                                        QUERY_TYPE_SINGLE},
 
     [QUERY_TPL_ADD_FOREIGN_KEY_COLUMN] = {"PRAGMA foreign_keys=0; "
                                           "BEGIN TRANSACTION; "
@@ -177,42 +181,12 @@ static query_t query_store[] = {
                                           "DROP TABLE %s_old; "
                                           "COMMIT; "
                                           "PRAGMA foreign_keys=%d;",
-                                          2},
+                                          QUERY_TYPE_MULTI},
 
-    [QUERY_TPL_DROP_TABLE] = {"DROP TABLE IF EXISTS %s;", 1},
+    [QUERY_TPL_DROP_TABLE] = {"DROP TABLE IF EXISTS %s;", QUERY_TYPE_SINGLE},
 
-    [QUERY_TPL_DELETE_RECORD_FROM_TABLE] = {"DELETE FROM %s WHERE rowid = ?;", 1},
+    [QUERY_TPL_DELETE_RECORD_FROM_TABLE] = {"DELETE FROM %s WHERE rowid = ?;", QUERY_TYPE_SINGLE},
 };
-
-status_t qm_init(sqlite3* db) {
-    LOG_DEBUG("Initializing Query Manager...");
-
-    int static_count  = 0;
-    int dynamic_count = 0;
-
-    // Prepare static queries and store the prepared statements in the query store for later use.
-    // Dynamic queries will be prepared on demand when requested, so they are not prepared at
-    // initialization.
-    for (int i = 0; i < QUERY_COUNT; i++) {
-        if (!query_store[i].type) {
-            // LOG_TRACE("Preparing static query %d: %.50s...", i, query_store[i].sql);
-
-            // int rc = sqlite3_prepare_v2(db, query_store[i].sql, -1, &query_store[i].stmt, NULL);
-            // if (rc != SQLITE_OK) {
-            //     LOG_ERROR("Failed to prepare static query %d: %s", i, sqlite3_errmsg(db));
-            //     return STATUS_DB_ERROR;
-            // }
-            static_count++;
-        } else {
-            dynamic_count++;
-        }
-    }
-
-    LOG_INFO("Query Manager initialized: %d static queries, %d dynamic queries.", static_count,
-             dynamic_count);
-
-    return STATUS_OK;
-}
 
 char* qm_get_str(QueryID qid) {
     if (qid < 0 || qid >= QUERY_COUNT) {
@@ -223,72 +197,26 @@ char* qm_get_str(QueryID qid) {
     return (char*)query_store[qid].sql;
 }
 
-sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid) {
-    LOG_TRACE("Retrieving static statement for QueryID %d", qid);
-
+sqlite3_stmt* qm_build_query_statement(sqlite3* db, QueryID qid, ...) {
     if (qid < 0 || qid >= QUERY_COUNT) {
         LOG_ERROR("Invalid QueryID: %d", qid);
-        return NULL;
-    }
-
-    // Static queries should have their statements prepared at initialization and stored in the
-    // query store. If the query is dynamic, it should not be retrieved using this function.
-    if (query_store[qid].type != 0) {
-        LOG_ERROR("QueryID %d is dynamic, use qm_build_dynamic_query_statement", qid);
-        return NULL;
-    }
-
-    sqlite3_stmt* s;
-
-    if (sqlite3_prepare_v2(db, query_store[qid].sql, -1, &s, NULL) !=
-        SQLITE_OK) {
-        LOG_ERROR("Failed to prepare static statement for QueryID %d: %s", qid,
-                  sqlite3_errmsg(NULL));
-        return NULL;
-    }
-
-    LOG_TRACE("Static statement for QueryID %d prepared successfully", qid);
-
-    // Reset the statement to clear any previous bindings and state before returning it for use.
-    // This ensures that the statement is in a clean state when retrieved for execution, preventing
-    // issues from previous executions from affecting the current use of the statement.
-    // sqlite3_reset(s);
-    // sqlite3_clear_bindings(s);
-
-    LOG_TRACE("Retrieved static statement for QueryID %d", qid);
-
-    return s;
-}
-
-sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...) {
-    if (qid < 0 || qid >= QUERY_COUNT) {
-        LOG_ERROR("Invalid QueryID: %d", qid);
-        return NULL;
-    }
-
-    if (query_store[qid].type != 1) {
-        LOG_ERROR("QueryID %d is static, use qm_get_static_query_statement", qid);
         return NULL;
     }
 
     const char* tpl = query_store[qid].sql;
     char        buffer[2048];
 
-    // Format the SQL query string using the provided variadic arguments. This allows us to create
-    // dynamic SQL queries based on templates defined in the query store, which can be used for
-    // operations that require variable components in the SQL, such as table names or column names.
     va_list args;
     va_start(args, qid);
     vsnprintf(buffer, sizeof(buffer), tpl, args);
     va_end(args);
 
-    LOG_TRACE("Built dynamic query: %.100s%s", buffer, strlen(buffer) > 100 ? "..." : "");
+    LOG_TRACE("Built query: %.100s%s", buffer, strlen(buffer) > 100 ? "..." : "");
 
-    sqlite3_stmt* s;
+    sqlite3_stmt* s = NULL;
 
-    // Prepare the formatted SQL query string to create a SQLite statement that can be executed.
     if (sqlite3_prepare_v2(db, buffer, -1, &s, NULL) != SQLITE_OK) {
-        LOG_ERROR("Failed to prepare dynamic query %d: %s", qid, sqlite3_errmsg(db));
+        LOG_ERROR("Failed to prepare query %d: %s", qid, sqlite3_errmsg(db));
         return NULL;
     }
 

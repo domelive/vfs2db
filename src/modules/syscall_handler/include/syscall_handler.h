@@ -38,6 +38,7 @@
 #include "db_handler.h"
 #include "helpers.h"
 #include "logger.h"
+#include "parser.h"
 
 /**
  * VFS2DB Init

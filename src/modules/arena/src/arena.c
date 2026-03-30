@@ -41,7 +41,6 @@ Arena* arena_create(size_t size) {
 
 void arena_destroy(Arena* arena) {
     assert(arena != NULL && "arena_destroy called with NULL arena");
-
     free(arena);
 }
 
@@ -80,9 +79,8 @@ void* arena_calloc(Arena* arena, size_t count, size_t size) {
 
     void* ptr = arena_alloc(arena, count * size);
 
-    if (ptr) {
+    if (ptr)
         memset(ptr, 0, count * size);
-    }
 
     return ptr;
 }

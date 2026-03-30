@@ -68,17 +68,6 @@ typedef enum {
 } QueryID;
 
 /**
- * Initialize Query Manager
- *
- * @brief Initializes the Query Manager by preparing static SQL statements.
- *
- * @param[in] db Pointer to the SQLite database connection
- *
- * @return STATUS_OK on success, STATUS_DB_ERROR on failure
- */
-status_t qm_init(sqlite3* db);
-
-/**
  * Get Query String
  *
  * @brief Retrieves the SQL query string associated with the given QueryID.
@@ -90,22 +79,9 @@ status_t qm_init(sqlite3* db);
 char* qm_get_str(QueryID qid);
 
 /**
- * Get Static Query Statement
- *
- * @brief Retrieves the prepared SQLite statement corresponding to the given QueryID.
- *
- * @param[in] db Pointer to the SQLite database connection
- * @param[in] qid The QueryID for which to retrieve the prepared statement
- *
- * @return Pointer to the prepared SQLite statement if found, NULL otherwise
- */
-sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid);
-
-/**
  * Get Dynamic Query Statement
  *
- * @brief Prepares and retrieves a dynamic SQLite statement based on the given QueryID and
- * parameters.
+ * @brief Builds a prepared SQLite statement for the given QueryID by formatting the associated SQL
  *
  * @param[in] db  Pointer to the SQLite database connection
  * @param[in] qid The QueryID for which to prepare the dynamic statement
@@ -113,7 +89,7 @@ sqlite3_stmt* qm_get_static_query_statement(sqlite3* db, QueryID qid);
  *
  * @return Pointer to the prepared SQLite statement if successful, NULL otherwise
  */
-sqlite3_stmt* qm_build_dynamic_query_statement(sqlite3* db, QueryID qid, ...);
+sqlite3_stmt* qm_build_query_statement(sqlite3* db, QueryID qid, ...);
 
 /**
  * Execute Multi-Statement Query
