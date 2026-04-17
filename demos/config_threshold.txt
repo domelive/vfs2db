@@ -1,0 +1,1 @@
+/tmp/test/sensors_config/1/threshold.vfs2db

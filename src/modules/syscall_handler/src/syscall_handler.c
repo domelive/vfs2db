@@ -48,10 +48,9 @@ static inline void ensure_arena_init() {
 }
 
 static inline char* remove_extension(const char* path) {
-    // We expect paths to end with ".vfs2db" for files, so we can remove the last 7 characters to
-    // get the base path for tokenization. If the path does not end with ".vfs2db", we will treat it
-    // as a directory path and return it as is (after duplicating it in the arena).
-    int noext_path_length = strlen(path) - 7;
+    // Retrieve the length of the path without the extension by subtracting the extension length
+    // from the total path length.
+    int noext_path_length = strlen(path) - EXT_LEN;
     if (noext_path_length <= 0) {
         LOG_WARN("Path too short to have extension: %s", path);
         return NULL;
@@ -68,6 +67,16 @@ static inline char* remove_extension(const char* path) {
     noext_path[noext_path_length] = 0;
 
     return noext_path;
+}
+
+static inline void init_stat(struct stat* st, mode_t mode, off_t size, nlink_t nlink, uid_t uid,
+                             gid_t gid, const struct stat* time_st) {
+    st->st_mode  = mode;
+    st->st_nlink = nlink;
+    st->st_uid   = uid;
+    st->st_gid   = gid;
+    st->st_size  = size;
+    st->st_atime = st->st_mtime = time_st->st_mtime;
 }
 
 static inline status_t check_symlink(Vfs2DbContext* ctx, PathFieldsResult* fields,
@@ -160,7 +169,7 @@ static inline status_t generate_dotschema_content(Vfs2DbContext* ctx, const char
         LOG_TRACE("PK: %s, Type: %s", current_pk->name, type_str);
 
         char entry[MAX_SIZE];
-        snprintf(entry, MAX_SIZE, "%s.%s.PK.vfs2db", current_pk->name, type_str);
+        snprintf(entry, MAX_SIZE, "%s.%s.PK%s", current_pk->name, type_str, EXT_COL);
         filler(content, entry, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
     }
 
@@ -171,7 +180,7 @@ static inline status_t generate_dotschema_content(Vfs2DbContext* ctx, const char
         LOG_TRACE("Attribute: %s, Type: %s", current_attr->name, type_str);
 
         char entry[MAX_SIZE];
-        snprintf(entry, MAX_SIZE, "%s.%s.ATTR.vfs2db", current_attr->name, type_str);
+        snprintf(entry, MAX_SIZE, "%s.%s.ATTR%s", current_attr->name, type_str, EXT_COL);
         filler(content, entry, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
     }
 
@@ -182,8 +191,8 @@ static inline status_t generate_dotschema_content(Vfs2DbContext* ctx, const char
         LOG_TRACE("FK: %s, Type: %s", current_fk->from, type_str);
 
         char entry[MAX_SIZE];
-        snprintf(entry, MAX_SIZE, "%s.%s(%s).FK.vfs2db", current_fk->from, current_fk->table,
-                 current_fk->to);
+        snprintf(entry, MAX_SIZE, "%s.%s(%s).FK%s", current_fk->from, current_fk->table,
+                 current_fk->to, EXT_COL);
         filler(content, entry, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
     }
 
@@ -239,7 +248,14 @@ static inline bool check_column_exists_in_dotschema(Vfs2DbContext* ctx, const ch
 
         // fields->attribute is in the form "name.TYPE.SPEC.vfs2db", we need to extract the name and
         // spec to check if the column exists in the schema
-        char* t = strtok(arena_strdup(arena, fields->attribute), ".");
+        char* attr_str = arena_strdup(arena, fields->attribute);
+        if (!attr_str) {
+            LOG_ERROR("Failed to duplicate attribute string for .schema column check: %s",
+                      fields->attribute);
+            return false;
+        }
+
+        char* t = strtok(attr_str, ".");
 
         if (find_pk_by_name(table, t) || find_attribute_by_name(table, t) ||
             find_fk_by_name(table, t)) {
@@ -411,31 +427,14 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
         goto cleanup;
     }
 
-    // If path doesn't end with .vfs2db, it's either a directory or a .schema file
-    if (strncmp(&path[strlen(path) - 7], ".vfs2db", 7)) {
-        if (strstr(path, ".Trash") != NULL) {
-            LOG_TRACE("The system asked for .Trash-xxxx directory");
-            return -ENOENT;
-        }
+    if (!ENDS_WITH(path, EXT_ATTR) && !ENDS_WITH(path, EXT_PK) && !ENDS_WITH(path, EXT_FK) &&
+        !ENDS_WITH(path, EXT_COL)) {
+        // if (strstr(path, ".Trash") != NULL) {
+        //     LOG_TRACE("The system asked for .Trash-xxxx directory");
+        //     return -ENOENT;
+        // }
 
-        // If path corresponds to a .schema file, we will treat it as a directory with dynamic
-        // content generated on readdir. This allows us to list the .schema file as a directory
-        // entry in readdir and generate its content dynamically when the client tries to read it.
-        // The actual content of the .schema file will be generated in the read handler based on the
-        // database schema.
-        if (check_dotschema(ctx, path)) {
-            LOG_TRACE("getattr: %s is a .schema directory", path);
-            st->st_mode  = S_IFDIR | 0755;
-            st->st_nlink = 2;
-            st->st_uid   = getuid();
-            st->st_gid   = getgid();
-
-            st->st_atime = st->st_mtime = time_st.st_mtime;
-
-            LOG_TRACE("getattr: %s is a .schema directory", path);
-        }
-        // Otherwise, we will treat it as a directory and check if it exists in the schema.
-        else {
+        if (!check_dotschema(ctx, path)) {
             // tokenize path to get table, record, and attribute for schema lookup
             PathFieldsResult* fields = parser_parse_path(arena, path);
             if (!fields) {
@@ -450,30 +449,17 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
                 return -ENOENT;
             }
 
-            st->st_mode  = S_IFDIR | 0755;
-            st->st_nlink = 2;
-            st->st_uid   = getuid();
-            st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time_st.st_mtime;
-
             LOG_TRACE("getattr: %s is a directory", path);
         }
-    }
-    // If path ends with .vfs2db, it's a file (either regular or symlink)
-    else {
+
+        init_stat(st, S_IFDIR | 0755, 0, 2, getuid(), getgid(), &time_st);
+    } else {
         // We should check if the file is in a .schema directory
         if (check_dotschema(ctx, path) && check_column_exists_in_dotschema(ctx, path)) {
             LOG_TRACE("getattr: %s is a file in a .schema directory", path);
-            st->st_mode  = S_IFREG | 0644;
-            st->st_nlink = 1;
-            st->st_uid   = getuid();
-            st->st_gid   = getgid();
-            st->st_atime = st->st_mtime = time_st.st_mtime;
-            st->st_size = 0; // We will generate content dynamically, so we can set size to 0
-            LOG_TRACE("getattr: %s is a file in a .schema directory", path);
+            init_stat(st, S_IFREG | 0644, 0, 1, getuid(), getgid(), &time_st);
             goto cleanup;
         } else {
-
             // Remove extension and tokenize path to get table, record, and attribute for schema
             // lookup
             char* noext_path;
@@ -497,18 +483,10 @@ int vfs2db_getattr(const char* path, struct stat* st, struct fuse_file_info* fi)
                 "Failed to check if attribute is a symlink for %s", path);
 
             if (is_symlink) {
-                st->st_mode  = S_IFLNK | 0644;
-                st->st_nlink = 1;
-                st->st_uid   = getuid();
-                st->st_gid   = getgid();
-                st->st_atime = st->st_mtime = time_st.st_mtime;
+                init_stat(st, S_IFLNK | 0644, 0, 1, getuid(), getgid(), &time_st);
                 LOG_TRACE("getattr: %s is a symlink (FK)", path);
             } else {
-                st->st_mode  = S_IFREG | 0644;
-                st->st_nlink = 1;
-                st->st_uid   = getuid();
-                st->st_gid   = getgid();
-                st->st_atime = st->st_mtime = time_st.st_mtime;
+                init_stat(st, S_IFREG | 0644, 0, 1, getuid(), getgid(), &time_st);
                 LOG_TRACE("getattr: %s is a regular file", path);
             }
 
@@ -636,22 +614,18 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
     filler(buffer, "..", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
 
     // Make a mutable copy of the path in the arena for tokenization and manipulation.
-    char* path_copy = arena_strdup(arena, path);
-    if (!path_copy) {
-        LOG_FUSE_EXIT("readdir", -ENOMEM);
-        return -ENOMEM;
-    }
+    char* path_copy = NULL;
+    TRY_NOT_NULL(path_copy = arena_strdup(arena, path), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to duplicate path");
 
     // Remove trailing slash if present to ensure consistent tokenization and schema lookup.
     if (path_copy[strlen(path) - 1] == '/') {
         path_copy[strlen(path) - 1] = 0;
     }
 
-    PathFieldsResult* fields = parser_parse_path(arena, path_copy);
-    if (!fields) {
-        LOG_FUSE_EXIT("readdir", -ENOMEM);
-        return -ENOMEM;
-    }
+    PathFieldsResult* fields = NULL;
+    TRY_NOT_NULL(fields = parser_parse_path(arena, path_copy), cleanup, STATUS_ALLOC_ERROR,
+                 "Failed to parse path");
 
     // Count the number of slashes in the path to determine the directory level.
     int slash_count = COUNT_CHAR(path_copy, '/');
@@ -713,7 +687,7 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
             TRY(record_exists(ctx, fields), cleanup, "Record not found: %s/%s", fields->table,
                 fields->record);
 
-            Schema* table;
+            Schema* table = NULL;
 
             // Look up the table schema for the specified table to get information about its
             // attributes, primary keys, and foreign keys, which will be listed as files in the
@@ -726,14 +700,14 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
 
             // Primary Keys (PKs)
             HASH_FOREACH(current_pk, table->pk_head) {
-                snprintf(file, sizeof(file), "%s.vfs2db", current_pk->name);
+                snprintf(file, sizeof(file), "%s%s", current_pk->name, EXT_PK);
                 filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
                 count++;
             }
 
             // Attributes
             HASH_FOREACH(current_attr, table->attr_head) {
-                snprintf(file, sizeof(file), "%s.vfs2db", current_attr->name);
+                snprintf(file, sizeof(file), "%s%s", current_attr->name, EXT_ATTR);
                 filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
                 count++;
             }
@@ -742,7 +716,7 @@ int vfs2db_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t
             // with .vfs2db extension. The actual symlink target will be determined in the getattr
             // handler based on the FK definition in the schema.
             HASH_FOREACH(current_fk, table->fks_head) {
-                snprintf(file, sizeof(file), "%s.vfs2db", current_fk->from);
+                snprintf(file, sizeof(file), "%s%s", current_fk->from, EXT_FK);
                 filler(buffer, file, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
                 count++;
             }
@@ -1093,7 +1067,7 @@ int vfs2db_symlink(const char* target, const char* linkpath) {
     // We need to remove the .vfs2db extension from the attribute component of both paths to get
     // the actual attribute names for schema lookup and FK update.
     // TODO: TRY them
-    fields_linkpath->attribute[strlen(fields_linkpath->attribute) - 4] = 0;
+    fields_linkpath->attribute[strlen(fields_linkpath->attribute) - strlen(EXT_UPDATE_LINK)] = 0;
     fields_linkpath->attribute = remove_extension(fields_linkpath->attribute);
     fields_target->attribute   = remove_extension(fields_target->attribute);
 
@@ -1337,7 +1311,7 @@ int vfs2db_readlink(const char* path, char* buffer, size_t size) {
 
     // Construct the link target path based on the resolved rowid and the target
     // attribute specified in the FK definition.
-    snprintf(buffer, size, "../../%s/%d/%s.vfs2db", fk->table, row_id, fk->to);
+    snprintf(buffer, size, "../../%s/%d/%s%s", fk->table, row_id, fk->to, EXT_PK);
 
     LOG_DEBUG("readlink: target=%s", buffer);
 

@@ -29,9 +29,9 @@ echo "50" > "$MNT_POINT/sensors_config/1/threshold.vfs2db"
 ln -s "$MNT_POINT/sensors_config/1/threshold.vfs2db" "$LEGACY_PATH_THRESHOLD"
 ln -s "$MNT_POINT/sensors_output/1/last_value.vfs2db" "$LEGACY_PATH_SENSOR"
 
-"$LEGACY_PATH_SCRIPT" &
-
-watch -n 1 'sqlite3 $DB_FILE "SELECT * FROM sensors_output;"'
+$LEGACY_PATH_SCRIPT
 
 rm "$LEGACY_PATH_THRESHOLD"
 rm "$LEGACY_PATH_SENSOR"
+
+umount "$MNT_POINT"

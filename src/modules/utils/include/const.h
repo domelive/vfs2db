@@ -61,4 +61,22 @@ extern int cache_enabled; /**< Flag to enable or disable caching (default: enabl
 
 #define ARENA_DEFAULT_SIZE MB(5) /**< Default size for memory arenas */
 
+#define EXT_LEN  3     /**< Length of file extensions (e.g., ".at", ".pk", ".fk") */
+#define EXT_ATTR ".at" /**< Extension for attribute files */
+#define EXT_PK   ".pk" /**< Extension for primary key files */
+#define EXT_FK   ".fk" /**< Extension for foreign key files */
+
+#define EXT_COL         ".col" /**< Extension for column files (used in .schema directories) */
+#define EXT_UPDATE_LINK ".lnk" /**< HACK: Dummy extension for update links */
+
+/**
+ * @brief Macro to check if a path ends with a specific extension.
+ *
+ * @param[in] path The input path.
+ * @param[in] ext  The extension to check for.
+ *
+ * @return true if the path ends with the specified extension, false otherwise.
+ */
+#define ENDS_WITH(path, ext) (strncmp((path) + strlen(path) - strlen(ext), (ext), strlen(ext)) == 0)
+
 #endif // CONST_H

@@ -13,4 +13,4 @@ if [ $? -ne 0 ]; then
 fi
 
 mkdir -p /tmp/test
-./src/vfs2db -f -o db=../databases/test_seq.db -o log=trace -o foreign_keys=1 -o auto_cache /tmp/test
+./src/vfs2db -f -o db=../databases/junction.db -o log=trace -o foreign_keys=1 -o auto_cache /tmp/test

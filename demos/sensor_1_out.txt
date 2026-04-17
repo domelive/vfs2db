@@ -1,0 +1,1 @@
+/tmp/test/sensors_output/1/last_value.vfs2db
