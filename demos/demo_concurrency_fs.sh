@@ -1,19 +1,16 @@
 #!/bin/bash
-TARGET_DIR="/tmp/test_concurrency/"
-
-mkdir -p "$TARGET_DIR"
+TARGET_DIR="."
 
 echo "--- VFS2DB CONCURRENCY TEST ---"
 echo "Aggiornamento in parallelo di colonne diverse..."
 
 update_db() {
-    local val=10
-    echo -n "Prodotto_$val" > "$TARGET_DIR/target_name.txt"
-    echo -n "$val" > "$TARGET_DIR/target_price.txt"
+    echo -n "Prodotto" > "$TARGET_DIR/target_name.txt"
+    echo -n 10 > "$TARGET_DIR/target_price.txt"
 }
 
 for i in {1..50}; do
-    update_db $i &
+    update_db &
 done
 
 wait

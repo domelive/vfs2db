@@ -86,6 +86,10 @@ static const struct fuse_opt option_spec[] = {
     OPTION("foreign_keys=%s", foreign_keys_on), FUSE_OPT_END};
 
 int main(int argc, char* argv[]) {
+    int pippo = 5;
+
+    pippo;
+
     if (logger_init_default() != 0) {
         fprintf(stderr, "Failed to initialize logger\n");
         return 1;

@@ -9,17 +9,17 @@ $DRIVER_BIN -o db="$DB_FILE" -o foreign_keys=1 -o auto_cache "$MNT_POINT" 2>/dev
 
 echo "--- Ricerca Utenti (Cognome S*) con prodotti 'Pro' ---"
 
-for product_file in $(grep -li "Pro" $MNT_POINT/orders/*/product_name.vfs2db 2>/dev/null); do
+for product_file in $(grep -li "Pro" $MNT_POINT/orders/*/product_name.at 2>/dev/null); do
     order_dir=$(dirname "$product_file")
 
-    user_name_file=$(readlink -f "$order_dir/user_name.vfs2db")
+    user_name_file=$(readlink -f "$order_dir/user_name.at")
     user_dir=$(dirname "$user_name_file")
 
-    surname=$(cat "$user_dir/surname.vfs2db")
+    surname=$(cat "$user_dir/surname.at")
 
     if [[ "$surname" == S* ]]; then
-        name=$(cat "$user_dir/name.vfs2db")
-        email=$(cat "$user_dir/email.vfs2db")
+        name=$(cat "$user_dir/name.at")
+        email=$(cat "$user_dir/email.at")
         product=$(cat "$product_file")
 
         echo "Match perfetto: $name $surname ($email) ha acquistato -> $product"
